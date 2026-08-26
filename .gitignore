@@ -7,5 +7,6 @@ coverage/
 .env
 .local-postgres/
 .clinic-lfs/
+staticfiles/
 *.log
 .DS_Store
