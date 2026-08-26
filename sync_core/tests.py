@@ -66,6 +66,7 @@ class HierarchyViewsTests(TestCase):
 			"expires_in_hours": "24",
 		}, follow=True)
 		self.assertContains(response, "Enrollment created")
+		self.assertContains(response, "http://testserver")
 		self.assertEqual(Device.objects.get().facility, facility)
 
 	def test_facility_repository_browser_is_scoped_and_masks_sensitive_fields(self):
@@ -116,7 +117,7 @@ class DeviceApiTests(TestCase):
 		enrollment = self.client.post(reverse("api-device-enroll"), {
 			"token": token,
 			"installationId": str(uuid.uuid4()),
-			"deviceName": "Main PC A",
+			"deviceName": "Electron Override",
 			"platform": "win32",
 			"appVersion": "1.0.0",
 		}, content_type="application/json")
@@ -126,6 +127,7 @@ class DeviceApiTests(TestCase):
 		self.assertEqual(body["device"]["facilityId"], str(self.facility.id))
 		device.refresh_from_db()
 		self.assertEqual(device.status, DeviceStatus.ENROLLED)
+		self.assertEqual(device.device_name, "Main PC A")
 
 		authentication = self.client.post(reverse("api-device-authenticate"), {
 			"clientKey": body["credentials"]["clientKey"],

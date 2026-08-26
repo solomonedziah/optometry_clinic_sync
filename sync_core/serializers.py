@@ -4,7 +4,7 @@ from rest_framework import serializers
 class EnrollDeviceSerializer(serializers.Serializer):
     token = serializers.CharField(min_length=32, max_length=512, trim_whitespace=True)
     installationId = serializers.UUIDField()
-    deviceName = serializers.CharField(min_length=1, max_length=160, trim_whitespace=True)
+    deviceName = serializers.CharField(min_length=1, max_length=160, trim_whitespace=True, required=False)
     platform = serializers.CharField(min_length=1, max_length=80, trim_whitespace=True)
     appVersion = serializers.CharField(min_length=1, max_length=40, trim_whitespace=True)
 

@@ -142,6 +142,7 @@ def facility_detail(request, institution_id, facility_id):
 		"devices": facility.devices.all(),
 		"form": form,
 		"enrollment": enrollment,
+		"cloud_service_url": request.build_absolute_uri("/").rstrip("/"),
 	})
 
 
@@ -234,7 +235,6 @@ def enroll_device_api(request):
 		device, client_key, client_secret = enroll_device(
 			token=data["token"],
 			installation_id=data["installationId"],
-			device_name=data["deviceName"],
 			platform=data["platform"],
 			app_version=data["appVersion"],
 		)

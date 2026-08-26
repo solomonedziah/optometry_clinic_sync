@@ -36,7 +36,7 @@ def create_pending_device(facility: Facility, *, device_name, location_name="", 
 
 
 @transaction.atomic
-def enroll_device(*, token, installation_id, device_name, platform, app_version):
+def enroll_device(*, token, installation_id, platform, app_version):
     try:
         enrollment = (
             EnrollmentToken.objects.select_for_update()
@@ -54,7 +54,6 @@ def enroll_device(*, token, installation_id, device_name, platform, app_version)
 
     now = timezone.now()
     device.installation_id = installation_id
-    device.device_name = device_name
     device.platform = platform
     device.app_version = app_version
     device.status = DeviceStatus.ENROLLED
