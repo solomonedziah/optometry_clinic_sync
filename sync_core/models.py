@@ -167,3 +167,31 @@ class FacilitySyncEvent(models.Model):
 	class Meta:
 		ordering = ["sequence"]
 		indexes = [models.Index(fields=["facility", "sequence"], name="facility_sync_cursor_idx")]
+
+
+class LargeFileObject(models.Model):
+	oid = models.CharField(max_length=64, primary_key=True)
+	size_bytes = models.PositiveBigIntegerField()
+	content_type = models.CharField(max_length=160, default="application/octet-stream")
+	storage_path = models.CharField(max_length=300, unique=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+
+class LargeFileReference(models.Model):
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	facility = models.ForeignKey(Facility, on_delete=models.CASCADE, related_name="large_file_references")
+	source_device = models.ForeignKey(Device, on_delete=models.PROTECT, related_name="large_file_references")
+	file_object = models.ForeignKey(LargeFileObject, on_delete=models.PROTECT, related_name="references")
+	entity_type = models.CharField(max_length=100)
+	entity_public_id = models.CharField(max_length=160)
+	file_name = models.CharField(max_length=255)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		constraints = [
+			models.UniqueConstraint(
+				fields=["facility", "file_object", "entity_type", "entity_public_id"],
+				name="unique_facility_large_file_reference",
+			),
+		]
+		indexes = [models.Index(fields=["facility", "entity_type", "entity_public_id"], name="facility_lfs_entity_idx")]

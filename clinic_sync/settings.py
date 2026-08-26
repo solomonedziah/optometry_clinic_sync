@@ -117,6 +117,9 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 
+CLINIC_LFS_ROOT = Path(os.getenv("CLINIC_LFS_ROOT", BASE_DIR / ".clinic-lfs"))
+CLINIC_LFS_MAX_BYTES = int(os.getenv("CLINIC_LFS_MAX_BYTES", str(100 * 1024 * 1024)))
+
 LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'institution-list'
 LOGOUT_REDIRECT_URL = 'login'

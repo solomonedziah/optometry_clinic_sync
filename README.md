@@ -20,7 +20,11 @@ Open <http://127.0.0.1:4000/>. PostgreSQL data is persisted in `.local-postgres/
 - `POST /api/devices/enroll`
 - `POST /api/devices/authenticate`
 - `GET /api/devices/me`
+- `PUT /api/lfs/objects/<sha256>`
+- `GET /api/lfs/objects/<sha256>`
 
 Enrollment tokens are single-use and bind a device directly to a facility. Device access tokens include `facilityId`, which is the synchronization boundary.
+
+Large files use content-addressed storage and are deduplicated by SHA-256. Their bytes are kept out of sync event JSON; events carry lightweight LFS pointers. Set `CLINIC_LFS_ROOT` to a persistent mounted volume in production and optionally set `CLINIC_LFS_MAX_BYTES` (default: 100 MB). A Railway deployment must mount a volume at the configured root because the normal container filesystem is ephemeral.
 
 The superseded Fastify/React implementation is retained under `legacy_typescript/` for reference.

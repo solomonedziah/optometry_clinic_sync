@@ -6,5 +6,6 @@ dist/
 coverage/
 .env
 .local-postgres/
+.clinic-lfs/
 *.log
 .DS_Store

@@ -45,6 +45,7 @@ urlpatterns = [
     path('api/devices/enroll', views.enroll_device_api, name='api-device-enroll'),
     path('api/devices/authenticate', views.authenticate_device_api, name='api-device-authenticate'),
     path('api/devices/me', views.device_me_api, name='api-device-me'),
+    path('api/lfs/objects/<str:oid>', views.large_file_object_api, name='api-lfs-object'),
     path('api/sync/push', views.sync_push_api, name='api-sync-push'),
     path('api/sync/pull', views.sync_pull_api, name='api-sync-pull'),
     path('api/repository/records', views.repository_records_api, name='api-repository-records'),

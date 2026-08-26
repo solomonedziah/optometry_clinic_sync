@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Device, DeviceCredential, EnrollmentToken, Facility, Institution
+from .models import Device, DeviceCredential, EnrollmentToken, Facility, Institution, LargeFileObject, LargeFileReference
 
 
 @admin.register(Institution)
@@ -25,3 +25,5 @@ class DeviceAdmin(admin.ModelAdmin):
 
 admin.site.register(EnrollmentToken)
 admin.site.register(DeviceCredential)
+admin.site.register(LargeFileObject)
+admin.site.register(LargeFileReference)

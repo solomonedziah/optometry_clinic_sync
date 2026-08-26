@@ -1,4 +1,7 @@
 import uuid
+import hashlib
+import tempfile
+from pathlib import Path
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -186,6 +189,75 @@ class DeviceApiTests(TestCase):
 		}, content_type="application/json", **headers)
 		self.assertEqual(unknown.status_code, 400)
 		self.assertEqual(FacilityDataRecord.objects.count(), 1)
+
+	def test_large_file_objects_are_deduplicated_and_facility_scoped(self):
+		_device, token, _ = create_pending_device(self.facility, device_name="Main PC A")
+		enrollment = self.client.post(reverse("api-device-enroll"), {
+			"token": token,
+			"installationId": str(uuid.uuid4()),
+			"deviceName": "Main PC A",
+			"platform": "win32",
+			"appVersion": "1.0.0",
+		}, content_type="application/json").json()
+		headers = {
+			"HTTP_AUTHORIZATION": f"Bearer {enrollment['accessToken']}",
+			"HTTP_X_CLINIC_ENTITY_TYPE": "lab_request",
+			"HTTP_X_CLINIC_ENTITY_ID": "request-1",
+			"HTTP_X_CLINIC_FILE_NAME": "scan.pdf",
+		}
+		content = b"clinic scan content"
+		oid = hashlib.sha256(content).hexdigest()
+		with tempfile.TemporaryDirectory() as directory:
+			with self.settings(CLINIC_LFS_ROOT=Path(directory)):
+				mismatch = self.client.put(
+					reverse("api-lfs-object", args=["0" * 64]),
+					content,
+					content_type="application/pdf",
+					**headers,
+				)
+				self.assertEqual(mismatch.status_code, 422)
+
+				created = self.client.put(
+					reverse("api-lfs-object", args=[oid]),
+					content,
+					content_type="application/pdf",
+					**headers,
+				)
+				self.assertEqual(created.status_code, 201)
+				self.assertEqual(created.json()["asset"]["oid"], oid)
+				self.assertFalse(created.json()["deduplicated"])
+
+				retry = self.client.put(
+					reverse("api-lfs-object", args=[oid]),
+					content,
+					content_type="application/pdf",
+					**headers,
+				)
+				self.assertEqual(retry.status_code, 200)
+				self.assertTrue(retry.json()["deduplicated"])
+
+				download = self.client.get(reverse("api-lfs-object", args=[oid]), **headers)
+				self.assertEqual(download.status_code, 200)
+				self.assertEqual(b"".join(download.streaming_content), content)
+
+				other_facility = Facility.objects.create(
+					institution=self.facility.institution,
+					name="Other Clinic",
+					code="OTHER",
+				)
+				_device, other_token, _ = create_pending_device(other_facility, device_name="Other Main PC")
+				other_enrollment = self.client.post(reverse("api-device-enroll"), {
+					"token": other_token,
+					"installationId": str(uuid.uuid4()),
+					"deviceName": "Other Main PC",
+					"platform": "win32",
+					"appVersion": "1.0.0",
+				}, content_type="application/json").json()
+				isolated = self.client.get(
+					reverse("api-lfs-object", args=[oid]),
+					HTTP_AUTHORIZATION=f"Bearer {other_enrollment['accessToken']}",
+				)
+				self.assertEqual(isolated.status_code, 404)
 
 	def test_sync_push_pull_is_idempotent_and_rejects_stale_concurrent_writes(self):
 		def enroll(name):

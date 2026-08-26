@@ -1,11 +1,17 @@
 import json
+import hashlib
+import os
+import re
+import tempfile
+from pathlib import Path
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.conf import settings
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count
-from django.http import Http404
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods
 from rest_framework import status
@@ -14,7 +20,16 @@ from rest_framework.response import Response
 
 from .forms import DeviceEnrollmentForm, FacilityForm, InstitutionForm
 from .data_catalog import DATA_TABLE_MAP, DATA_TABLES
-from .models import DeviceStatus, Facility, FacilityDataRecord, FacilitySyncEntity, FacilitySyncEvent, Institution
+from .models import (
+	DeviceStatus,
+	Facility,
+	FacilityDataRecord,
+	FacilitySyncEntity,
+	FacilitySyncEvent,
+	Institution,
+	LargeFileObject,
+	LargeFileReference,
+)
 from .serializers import (
 	AuthenticateDeviceSerializer,
 	EnrollDeviceSerializer,
@@ -55,6 +70,24 @@ def _authenticated_device(request):
 	if not authorization.startswith("Bearer "):
 		return None
 	return device_from_access_token(authorization.removeprefix("Bearer ").strip())
+
+
+def _large_file_key(oid):
+	return Path("objects") / oid[:2] / oid[2:4] / oid
+
+
+def _large_file_path(oid):
+	return Path(settings.CLINIC_LFS_ROOT) / _large_file_key(oid)
+
+
+def _large_file_pointer(file_object, reference):
+	return {
+		"oid": file_object.oid,
+		"size": file_object.size_bytes,
+		"contentType": file_object.content_type,
+		"fileName": reference.file_name,
+		"referenceId": str(reference.id),
+	}
 
 
 @login_required
@@ -242,6 +275,98 @@ def device_me_api(request):
 	if device is None or device.status != DeviceStatus.ENROLLED:
 		return Response({"error": "Device authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
 	return Response({"device": device_payload(device)})
+
+
+@api_view(["PUT", "GET"])
+def large_file_object_api(request, oid):
+	device = _authenticated_device(request)
+	if device is None or device.status != DeviceStatus.ENROLLED:
+		return Response({"error": "Device authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
+	if not re.fullmatch(r"[0-9a-f]{64}", oid):
+		return Response({"error": "A lowercase SHA-256 object ID is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+	if request.method == "GET":
+		reference = LargeFileReference.objects.select_related("file_object").filter(
+			facility=device.facility,
+			file_object_id=oid,
+		).first()
+		if reference is None:
+			return Response({"error": "Large file object was not found."}, status=status.HTTP_404_NOT_FOUND)
+		object_path = Path(settings.CLINIC_LFS_ROOT) / reference.file_object.storage_path
+		if not object_path.is_file():
+			return Response({"error": "Large file content is unavailable."}, status=status.HTTP_410_GONE)
+		response = FileResponse(object_path.open("rb"), content_type=reference.file_object.content_type)
+		response["Content-Length"] = reference.file_object.size_bytes
+		response["Content-Disposition"] = f'attachment; filename="{Path(reference.file_name).name}"'
+		response["X-Clinic-Oid"] = oid
+		return response
+
+	entity_type = request.headers.get("X-Clinic-Entity-Type", "").strip()
+	entity_public_id = request.headers.get("X-Clinic-Entity-Id", "").strip()
+	file_name = Path(request.headers.get("X-Clinic-File-Name", "file")).name[:255]
+	content_type = request.headers.get("Content-Type", "application/octet-stream")[:160]
+	if not entity_type or len(entity_type) > 100 or not entity_public_id or len(entity_public_id) > 160:
+		return Response({"error": "Large file entity metadata is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+	declared_size = request.headers.get("Content-Length")
+	if declared_size:
+		try:
+			if int(declared_size) > settings.CLINIC_LFS_MAX_BYTES:
+				return Response({"error": "Large file exceeds the configured size limit."}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+		except ValueError:
+			return Response({"error": "Content-Length must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
+
+	root = Path(settings.CLINIC_LFS_ROOT)
+	temporary_directory = root / "tmp"
+	temporary_directory.mkdir(parents=True, exist_ok=True)
+	digest = hashlib.sha256()
+	size_bytes = 0
+	temporary_path = None
+	try:
+		with tempfile.NamedTemporaryFile(dir=temporary_directory, delete=False) as temporary_file:
+			temporary_path = Path(temporary_file.name)
+			while chunk := request._request.read(1024 * 1024):
+				size_bytes += len(chunk)
+				if size_bytes > settings.CLINIC_LFS_MAX_BYTES:
+					return Response({"error": "Large file exceeds the configured size limit."}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+				digest.update(chunk)
+				temporary_file.write(chunk)
+		if digest.hexdigest() != oid:
+			return Response({"error": "Large file SHA-256 does not match its object ID."}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+		object_path = _large_file_path(oid)
+		object_path.parent.mkdir(parents=True, exist_ok=True)
+		deduplicated = object_path.exists()
+		if not deduplicated:
+			os.replace(temporary_path, object_path)
+			temporary_path = None
+		with transaction.atomic():
+			file_object, created = LargeFileObject.objects.get_or_create(
+				oid=oid,
+				defaults={
+					"size_bytes": size_bytes,
+					"content_type": content_type,
+					"storage_path": _large_file_key(oid).as_posix(),
+				},
+			)
+			if file_object.size_bytes != size_bytes:
+				return Response({"error": "Large file size conflicts with the existing object."}, status=status.HTTP_409_CONFLICT)
+			reference, _ = LargeFileReference.objects.get_or_create(
+				facility=device.facility,
+				source_device=device,
+				file_object=file_object,
+				entity_type=entity_type,
+				entity_public_id=entity_public_id,
+				defaults={"file_name": file_name},
+			)
+		return Response({
+			"uploaded": created,
+			"deduplicated": deduplicated or not created,
+			"asset": _large_file_pointer(file_object, reference),
+		}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+	finally:
+		if temporary_path is not None:
+			temporary_path.unlink(missing_ok=True)
 
 
 @api_view(["POST"])
