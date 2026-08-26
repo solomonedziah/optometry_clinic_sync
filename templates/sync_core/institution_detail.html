@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+{% block title %}{{ institution.name }} · Clinic Sync{% endblock %}
+{% block content %}
+<a class="back-link" href="{% url 'institution-list' %}">← All institutions</a>
+<header class="page-header"><div><p class="eyebrow">{{ institution.code }}</p><h1>{{ institution.name }}</h1><p>Select a facility to manage the Main PCs that synchronize within it.</p></div></header>
+<section class="form-section"><div class="section-heading"><div><h2>Add facility</h2><p>Facility codes are unique within this institution.</p></div></div><form method="post" class="form-grid">{% csrf_token %}{{ form.as_div }}<div class="form-actions"><button class="primary-button" type="submit">Create facility</button></div></form></section>
+<section class="table-section"><div class="section-heading"><h2>Facilities</h2><span>{{ facilities|length }}</span></div>
+{% if facilities %}<div class="data-table"><div class="table-row table-head"><span>Facility</span><span>Code</span><span>Sync</span><span></span></div>{% for facility in facilities %}<a class="table-row" href="{% url 'facility-detail' institution.id facility.id %}"><strong>{{ facility.name }}</strong><span>{{ facility.code }}</span><span class="status {% if facility.sync_enabled %}active{% else %}revoked{% endif %}">{% if facility.sync_enabled %}Enabled{% else %}Disabled{% endif %}</span><span>Open</span></a>{% endfor %}</div>{% else %}<div class="empty-state"><h3>No facilities yet</h3><p>Add a facility to establish a synchronization boundary.</p></div>{% endif %}
+</section>
+{% endblock %}

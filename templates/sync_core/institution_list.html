@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+{% block title %}Institutions · Clinic Sync{% endblock %}
+{% block content %}
+<header class="page-header"><div><p class="eyebrow">Administration</p><h1>Institutions</h1><p>Manage institutions and their optometry facilities.</p></div></header>
+<section class="form-section"><div class="section-heading"><div><h2>Create institution</h2><p>Add the organisation before defining its facilities.</p></div></div><form method="post" class="form-grid">{% csrf_token %}{{ form.as_div }}<div class="form-actions"><button class="primary-button" type="submit">Create institution</button></div></form></section>
+<section class="table-section"><div class="section-heading"><h2>Registered institutions</h2><span>{{ institutions|length }}</span></div>
+{% if institutions %}<div class="data-table"><div class="table-row table-head"><span>Institution</span><span>Code</span><span>Status</span><span></span></div>{% for institution in institutions %}<a class="table-row" href="{% url 'institution-detail' institution.id %}"><strong>{{ institution.name }}</strong><span>{{ institution.code }}</span><span class="status active">{{ institution.get_status_display }}</span><span>Open</span></a>{% endfor %}</div>{% else %}<div class="empty-state"><h3>No institutions yet</h3><p>Create the first institution to add its facilities.</p></div>{% endif %}
+</section>
+{% endblock %}

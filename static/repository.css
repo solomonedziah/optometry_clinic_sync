@@ -1,0 +1,136 @@
+.repository-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+  padding: 24px 26px;
+  border: 1px solid #9fc8bd;
+  background: #e8f3ef;
+}
+
+.repository-banner .eyebrow {
+  margin-top: 0;
+}
+
+.repository-banner p:last-child {
+  margin-bottom: 0;
+  color: #526d67;
+}
+
+.repository-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.repository-total {
+  display: grid;
+  min-width: 150px;
+  padding-left: 22px;
+  border-left: 1px solid #b9cbc4;
+}
+
+.repository-total strong {
+  font-family: "Newsreader", serif;
+  font-size: 34px;
+}
+
+.repository-total span,
+.repository-table-row code {
+  color: #687c77;
+  font-size: 12px;
+}
+
+.repository-group {
+  margin-bottom: 18px;
+}
+
+.repository-table-list {
+  border-top: 1px solid #d2ded9;
+}
+
+.repository-table-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 58px;
+  padding: 10px 4px;
+  border-bottom: 1px solid #d2ded9;
+}
+
+.repository-table-row:hover {
+  color: #0c544b;
+  background: #f2f7f5;
+}
+
+.repository-table-row > span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.record-count {
+  min-width: 42px;
+  padding: 4px 8px;
+  border: 1px solid #bad0c9;
+  border-radius: 4px;
+  background: #f7faf8;
+  text-align: center;
+  font-weight: 700;
+}
+
+.repository-scroll {
+  overflow-x: auto;
+}
+
+.repository-records table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.repository-records th,
+.repository-records td {
+  max-width: 360px;
+  padding: 11px 13px;
+  border-bottom: 1px solid #d7e1dd;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.repository-records th {
+  background: #edf4f1;
+  color: #36544e;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  padding-top: 20px;
+}
+
+.pagination a {
+  color: #0c544b;
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .repository-banner,
+  .repository-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .repository-total {
+    padding: 14px 0 0;
+    border-top: 1px solid #b9cbc4;
+    border-left: 0;
+  }
+}

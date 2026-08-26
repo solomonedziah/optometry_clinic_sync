@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block title %}{{ facility.name }} data · Clinic Sync{% endblock %}
+{% block content %}
+<a class="back-link" href="{% url 'facility-detail' institution.id facility.id %}">← {{ facility.name }}</a>
+<header class="page-header repository-header"><div><p class="eyebrow">{{ institution.code }} / {{ facility.code }} / DATA</p><h1>Facility data</h1><p>Read-only view of application records mirrored from enrolled Main PCs.</p></div><div class="repository-total"><strong>{{ total_records }}</strong><span>mirrored records</span></div></header>
+{% for group in groups %}
+<section class="table-section repository-group"><div class="section-heading"><div><h2>{{ group.name }}</h2><p>Tables available in this application domain.</p></div></div>
+<div class="repository-table-list">
+{% for table in group.tables %}<a class="repository-table-row" href="{% url 'facility-data-table' institution.id facility.id table.name %}"><span><strong>{{ table.label }}</strong><code>{{ table.name }}</code></span><span class="record-count">{{ table.count }}</span></a>{% endfor %}
+</div></section>
+{% endfor %}
+{% endblock %}

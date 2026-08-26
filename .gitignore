@@ -1,0 +1,10 @@
+node_modules/
+.venv/
+__pycache__/
+*.py[cod]
+dist/
+coverage/
+.env
+.local-postgres/
+*.log
+.DS_Store

@@ -1,0 +1,28 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clinic Sync Login</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'app.css' %}">
+</head>
+<body class="login-page">
+  <main class="login-panel">
+    <div class="brand-mark">CS</div>
+    <p class="eyebrow">Clinic Sync Administration</p>
+    <h1>Administrator access</h1>
+    <p class="lede">Sign in to manage institutions, facilities, and enrolled Main PCs.</p>
+    <form method="post" class="stack-form">
+      {% csrf_token %}
+      <label>Username{{ form.username }}</label>
+      <label>Password{{ form.password }}</label>
+      {% if form.errors %}<p class="error">The username or password is incorrect.</p>{% endif %}
+      <button class="primary-button" type="submit">Sign in</button>
+    </form>
+  </main>
+</body>
+</html>

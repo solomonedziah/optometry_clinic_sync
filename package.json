@@ -1,0 +1,11 @@
+{
+  "name": "optometry-clinic-sync-local-db",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:db": "node scripts/local-db.mjs"
+  },
+  "devDependencies": {
+    "embedded-postgres": "^17.10.0-beta.17"
+  }
+}

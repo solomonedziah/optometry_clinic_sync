@@ -1,0 +1,30 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Clinic Sync{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'app.css' %}">
+  <link rel="stylesheet" href="{% static 'responsive.css' %}">
+  <link rel="stylesheet" href="{% static 'repository.css' %}">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="{% url 'institution-list' %}"><span class="brand-mark">CS</span><strong>Clinic Sync</strong></a>
+      <nav><a class="nav-item" href="{% url 'institution-list' %}">Institutions</a></nav>
+      {% if user.is_authenticated %}
+        <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="nav-item logout" type="submit">Sign out</button></form>
+      {% endif %}
+    </aside>
+    <main class="workspace">
+      {% for message in messages %}<div class="message">{{ message }}</div>{% endfor %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

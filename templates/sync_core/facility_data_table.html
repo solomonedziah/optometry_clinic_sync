@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+{% block title %}{{ table.label }} · {{ facility.name }} · Clinic Sync{% endblock %}
+{% block content %}
+<a class="back-link" href="{% url 'facility-data-browser' institution.id facility.id %}">← Facility data</a>
+<header class="page-header"><div><p class="eyebrow">{{ table.group }} / {{ table.name }}</p><h1>{{ table.label }}</h1><p>{{ page.paginator.count }} mirrored record{{ page.paginator.count|pluralize }} · read only</p></div></header>
+{% if rows %}<section class="table-section repository-records"><div class="repository-scroll"><table><thead><tr><th>Record ID</th><th>Version</th><th>Updated</th>{% for column in columns %}<th>{{ column }}</th>{% endfor %}</tr></thead><tbody>{% for row in rows %}<tr><td><code>{{ row.record_id }}</code></td><td>{{ row.version }}</td><td>{{ row.updated_at }}</td>{% for cell in row.cells %}<td>{{ cell }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+{% if page.has_other_pages %}<nav class="pagination">{% if page.has_previous %}<a href="?page={{ page.previous_page_number }}">Previous</a>{% endif %}<span>Page {{ page.number }} of {{ page.paginator.num_pages }}</span>{% if page.has_next %}<a href="?page={{ page.next_page_number }}">Next</a>{% endif %}</nav>{% endif %}</section>
+{% else %}<div class="empty-state"><h3>No synchronized records</h3><p>This table will populate when an enrolled Main PC begins pushing local changes.</p></div>{% endif %}
+{% endblock %}
