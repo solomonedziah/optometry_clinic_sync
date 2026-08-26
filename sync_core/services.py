@@ -8,7 +8,8 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Device, DeviceCredential, DeviceStatus, EnrollmentToken, Facility
+from .data_catalog import DATA_TABLE_MAP, SYNC_ENTITY_PAYLOAD_KEYS, SYNC_ENTITY_TABLE_MAP
+from .models import Device, DeviceCredential, DeviceStatus, EnrollmentToken, Facility, FacilityDataRecord
 
 ACCESS_TOKEN_MAX_AGE = 900
 
@@ -117,3 +118,36 @@ def device_from_access_token(raw_token):
         )
     except (jwt.PyJWTError, KeyError, Device.DoesNotExist):
         return None
+
+
+def project_sync_event(event):
+    table_name = SYNC_ENTITY_TABLE_MAP.get(event.entity_type)
+    if table_name is None:
+        candidates = (event.entity_type, f"{event.entity_type}s")
+        table_name = next((candidate for candidate in candidates if candidate in DATA_TABLE_MAP), None)
+    if table_name is None:
+        return None
+
+    payload_key = SYNC_ENTITY_PAYLOAD_KEYS.get(event.entity_type)
+    payload = event.payload.get(payload_key, event.payload) if payload_key else event.payload
+    if not isinstance(payload, dict):
+        payload = event.payload
+
+    record, created = FacilityDataRecord.objects.select_for_update().get_or_create(
+        facility=event.facility,
+        table_name=table_name,
+        record_id=event.entity_public_id,
+        defaults={
+            "source_device": event.source_device,
+            "payload": payload,
+            "version": event.entity_version,
+            "deleted": event.operation == "delete",
+        },
+    )
+    if not created and record.version <= event.entity_version:
+        record.source_device = event.source_device
+        record.payload = payload
+        record.version = event.entity_version
+        record.deleted = event.operation == "delete"
+        record.save()
+    return record

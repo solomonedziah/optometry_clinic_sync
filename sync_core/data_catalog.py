@@ -79,3 +79,27 @@ DATA_TABLES = (
 )
 
 DATA_TABLE_MAP = {table.name: table for table in DATA_TABLES}
+SYNC_ENTITY_TABLE_MAP = {
+	"activity_log": "activity_logs",
+	"appointment": "appointments",
+	"consultation_version": "consultation_versions",
+	"finance_payment": "payments",
+	"inventory_category": "inventory_categories",
+	"inventory_item": "inventory_items",
+	"inventory_movement": "inventory_movements",
+	"patient": "patients_patient",
+	"pharmacy_order": "pharmacy_orders",
+	"user": "users",
+}
+
+SYNC_ENTITY_PAYLOAD_KEYS = {
+	"appointment": "appointment",
+	"consultation_version": "version",
+	"finance_payment": "payment",
+	"inventory_category": "category",
+	"inventory_item": "item",
+	"inventory_movement": "movement",
+	"patient": "patient",
+	"pharmacy_order": "order",
+	"user": "user",
+}

@@ -217,10 +217,18 @@ class DeviceApiTests(TestCase):
 		)
 		self.assertEqual(accepted.status_code, 200)
 		self.assertEqual(accepted.json(), {"acceptedEventIds": [first_event_id], "conflicts": []})
+		projected = FacilityDataRecord.objects.get(
+			facility=self.facility,
+			table_name="patients_patient",
+			record_id="patient-1",
+		)
+		self.assertEqual(projected.payload, {"firstName": "Ama"})
+		self.assertEqual(projected.version, 1)
 		retry = self.client.post(
 			reverse("api-sync-push"), {"events": [first_event]}, content_type="application/json", **first_headers,
 		)
 		self.assertEqual(retry.json(), accepted.json())
+		self.assertEqual(FacilityDataRecord.objects.filter(table_name="patients_patient").count(), 1)
 
 		stale_event_id = str(uuid.uuid4())
 		stale = self.client.post(reverse("api-sync-push"), {"events": [{

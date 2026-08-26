@@ -29,6 +29,7 @@ from .services import (
 	device_from_access_token,
 	enroll_device,
 	issue_access_token,
+	project_sync_event,
 )
 
 
@@ -259,6 +260,7 @@ def sync_push_api(request):
 			if existing_event:
 				if existing_event.facility_id != device.facility_id:
 					return Response({"error": "Event ID belongs to another facility."}, status=status.HTTP_409_CONFLICT)
+				project_sync_event(existing_event)
 				accepted_event_ids.append(str(existing_event.event_id))
 				continue
 
@@ -296,6 +298,7 @@ def sync_push_api(request):
 			entity.deleted = incoming["operation"] == "delete"
 			entity.source_device = device
 			entity.save()
+			project_sync_event(event)
 			accepted_event_ids.append(str(event.event_id))
 
 	return Response({"acceptedEventIds": accepted_event_ids, "conflicts": conflicts})
