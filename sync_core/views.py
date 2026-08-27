@@ -396,6 +396,14 @@ def sync_push_api(request):
 				defaults={"source_device": device},
 			)
 			if entity.version != incoming["baseVersion"]:
+				is_equivalent = (
+					entity.version == incoming["entityVersion"]
+					and entity.payload == incoming["payload"]
+					and entity.deleted == (incoming["operation"] == "delete")
+				)
+				if is_equivalent:
+					accepted_event_ids.append(str(incoming["eventId"]))
+					continue
 				conflicts.append({
 					"eventId": str(incoming["eventId"]),
 					"entityType": incoming["entityType"],

@@ -8,7 +8,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from .data_catalog import DATA_TABLE_MAP
-from .models import Device, DeviceStatus, Facility, FacilityDataRecord, Institution
+from .models import Device, DeviceStatus, Facility, FacilityDataRecord, FacilitySyncEvent, Institution
 from .services import create_pending_device
 
 
@@ -303,6 +303,16 @@ class DeviceApiTests(TestCase):
 		)
 		self.assertEqual(retry.json(), accepted.json())
 		self.assertEqual(FacilityDataRecord.objects.filter(table_name="patients_patient").count(), 1)
+
+		equivalent_event_id = str(uuid.uuid4())
+		equivalent = self.client.post(
+			reverse("api-sync-push"),
+			{"events": [{**first_event, "eventId": equivalent_event_id}]},
+			content_type="application/json",
+			**second_headers,
+		)
+		self.assertEqual(equivalent.json(), {"acceptedEventIds": [equivalent_event_id], "conflicts": []})
+		self.assertEqual(FacilitySyncEvent.objects.count(), 1)
 
 		stale_event_id = str(uuid.uuid4())
 		stale = self.client.post(reverse("api-sync-push"), {"events": [{
