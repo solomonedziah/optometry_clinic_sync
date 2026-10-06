@@ -1,5 +1,6 @@
 import uuid
 import hashlib
+import time
 import tempfile
 from pathlib import Path
 
@@ -7,8 +8,20 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
+from .conflicts import PLATFORM_SOURCE_ID, password_fingerprint, password_versions, uuid7
 from .data_catalog import DATA_TABLE_MAP
-from .models import Device, DeviceStatus, Facility, FacilityDataRecord, FacilitySyncEvent, Institution
+from .models import (
+	ConflictResolution,
+	ConflictStatus,
+	Device,
+	DeviceStatus,
+	Facility,
+	FacilityDataRecord,
+	FacilitySyncConflict,
+	FacilitySyncEntity,
+	FacilitySyncEvent,
+	Institution,
+)
 from .services import create_pending_device
 
 
@@ -332,3 +345,174 @@ class DeviceApiTests(TestCase):
 		self.assertEqual(len(pulled.json()["events"]), 1)
 		self.assertEqual(pulled.json()["events"][0]["eventId"], first_event_id)
 		self.assertGreater(pulled.json()["latestSequence"], 0)
+
+
+class ConflictResolutionTests(TestCase):
+	def setUp(self):
+		institution = Institution.objects.create(name="University of Cape Coast", code="UCC")
+		self.facility = Facility.objects.create(institution=institution, name="Optometry Eye Clinic", code="EYE")
+		self.admin = get_user_model().objects.create_user(username="admin", password="temporary-password")
+		self.machine_a = self.enroll("Main PC A")
+		self.machine_b = self.enroll("Main PC B")
+
+	def enroll(self, name):
+		_device, token, _ = create_pending_device(self.facility, device_name=name)
+		body = self.client.post(reverse("api-device-enroll"), {
+			"token": token,
+			"installationId": str(uuid.uuid4()),
+			"deviceName": name,
+			"platform": "win32",
+			"appVersion": "1.0.0",
+		}, content_type="application/json").json()
+		return {"HTTP_AUTHORIZATION": f"Bearer {body['accessToken']}"}
+
+	def push(self, headers, *events):
+		response = self.client.post(reverse("api-sync-push"), {"events": list(events)}, content_type="application/json", **headers)
+		self.assertEqual(response.status_code, 200)
+		return response.json()
+
+	def pull(self, headers, after=0):
+		return self.client.post(reverse("api-sync-pull"), {"after": after, "limit": 500}, content_type="application/json", **headers).json()
+
+	def event_id(self):
+		# uuid7 ids order by millisecond; keep consecutive ids strictly increasing.
+		time.sleep(0.003)
+		return str(uuid7())
+
+	def user_create(self, password_hash="$2a$10$original"):
+		return {
+			"eventId": self.event_id(),
+			"entityType": "user",
+			"entityPublicId": "user-sedziah",
+			"operation": "create",
+			"baseVersion": 0,
+			"entityVersion": 1,
+			"payload": {"user": {"publicId": "user-sedziah", "username": "sedziah", "firstName": "Solomon", "passwordHash": password_hash}},
+		}
+
+	def credential(self, event_id, base, password_hash):
+		return {
+			"eventId": event_id,
+			"entityType": "user",
+			"entityPublicId": "user-sedziah",
+			"operation": "update",
+			"baseVersion": base,
+			"entityVersion": base + 1,
+			"payload": {"userCredential": {"publicId": "user-sedziah", "passwordHash": password_hash, "mustChangePassword": False}},
+		}
+
+	def patient_create(self):
+		return {
+			"eventId": self.event_id(), "entityType": "patient", "entityPublicId": "patient-1", "operation": "create",
+			"baseVersion": 0, "entityVersion": 1, "payload": {"patient": {"firstName": "Ama"}},
+		}
+
+	def facility_url(self, name, *extra):
+		return reverse(name, args=[self.facility.institution_id, self.facility.id, *extra])
+
+	def test_rejected_push_is_recorded_and_retries_count_as_attempts(self):
+		create = self.patient_create()
+		self.push(self.machine_a, create)
+		stale = {**create, "eventId": self.event_id(), "payload": {"patient": {"firstName": "Efua"}}}
+		self.assertEqual(len(self.push(self.machine_b, stale)["conflicts"]), 1)
+		self.push(self.machine_b, stale)
+
+		conflict = FacilitySyncConflict.objects.get()
+		self.assertEqual(conflict.status, ConflictStatus.OPEN)
+		self.assertEqual(conflict.device.device_name, "Main PC B")
+		self.assertEqual(conflict.canonical_device.device_name, "Main PC A")
+		self.assertEqual(conflict.canonical_payload, create["payload"])
+		self.assertEqual(conflict.incoming_payload, stale["payload"])
+		self.assertEqual(conflict.attempts, 2)
+
+	def test_older_password_resent_on_top_is_acknowledged_but_not_applied(self):
+		self.push(self.machine_a, self.user_create())
+		older_id = self.event_id()  # Machine B changed the password first, while offline.
+		self.push(self.machine_a, self.credential(self.event_id(), 1, "$2a$10$from-a"))
+
+		# B's change arrives late, rebased onto the server version as the desktop client does.
+		response = self.push(self.machine_b, self.credential(older_id, 2, "$2a$10$from-b"))
+		self.assertEqual(response, {"acceptedEventIds": [older_id], "conflicts": []})
+		entity = FacilitySyncEntity.objects.get(entity_public_id="user-sedziah")
+		self.assertEqual(entity.version, 2)
+		self.assertEqual(entity.payload["userCredential"]["passwordHash"], "$2a$10$from-a")
+		conflict = FacilitySyncConflict.objects.get(event_id=older_id)
+		self.assertEqual(conflict.status, ConflictStatus.AUTO_RESOLVED)
+		self.assertEqual(conflict.resolution, ConflictResolution.OLDER_CREDENTIAL_IGNORED)
+
+	def test_newer_password_resent_on_top_settles_its_conflict(self):
+		self.push(self.machine_a, self.user_create())
+		self.push(self.machine_a, self.credential(self.event_id(), 1, "$2a$10$from-a"))
+		newer = self.credential(self.event_id(), 1, "$2a$10$from-b")
+		self.assertEqual(len(self.push(self.machine_b, newer)["conflicts"]), 1)
+		self.push(self.machine_b, {**newer, "baseVersion": 2, "entityVersion": 3})
+
+		conflict = FacilitySyncConflict.objects.get(event_id=newer["eventId"])
+		self.assertEqual(conflict.resolution, ConflictResolution.DEVICE_RESENT)
+		record = FacilityDataRecord.objects.get(table_name="users", record_id="user-sedziah")
+		self.assertEqual(record.payload["username"], "sedziah")
+		self.assertEqual(record.payload["passwordHash"], "$2a$10$from-b")
+
+	def test_using_the_device_version_issues_a_platform_event(self):
+		create = self.patient_create()
+		self.push(self.machine_a, create)
+		self.push(self.machine_b, {**create, "eventId": self.event_id(), "payload": {"patient": {"firstName": "Efua"}}})
+		conflict = FacilitySyncConflict.objects.get()
+		self.client.force_login(self.admin)
+
+		response = self.client.post(self.facility_url("facility-conflict-detail", conflict.pk), {"choice": "device"})
+		self.assertRedirects(response, self.facility_url("facility-conflict-detail", conflict.pk))
+		conflict.refresh_from_db()
+		self.assertEqual(conflict.status, ConflictStatus.RESOLVED)
+		self.assertEqual(conflict.resolution, ConflictResolution.APPLIED_DEVICE)
+		self.assertEqual(conflict.resolved_by, self.admin)
+
+		events = self.pull(self.machine_a)["events"]
+		self.assertEqual(events[-1]["sourceDeviceId"], PLATFORM_SOURCE_ID)
+		self.assertEqual((events[-1]["baseVersion"], events[-1]["entityVersion"]), (1, 2))
+		self.assertEqual(events[-1]["payload"], {"patient": {"firstName": "Efua"}})
+		self.assertEqual(str(conflict.resolution_event_id), events[-1]["eventId"])
+		repeat = self.client.post(self.facility_url("facility-conflict-detail", conflict.pk), {"choice": "server"}, follow=True)
+		self.assertContains(repeat, "already been settled")
+
+	def test_keeping_the_server_password_rebroadcasts_it_with_a_newer_event(self):
+		self.push(self.machine_a, self.user_create())
+		self.push(self.machine_a, self.credential(self.event_id(), 1, "$2a$10$from-a"))
+		self.push(self.machine_b, self.credential(self.event_id(), 1, "$2a$10$from-b"))
+		conflict = FacilitySyncConflict.objects.get(status=ConflictStatus.OPEN)
+		self.client.force_login(self.admin)
+
+		self.client.post(self.facility_url("facility-conflict-detail", conflict.pk), {"choice": "server"})
+		last = self.pull(self.machine_b)["events"][-1]
+		self.assertEqual(last["payload"]["userCredential"]["passwordHash"], "$2a$10$from-a")
+		self.assertGreater(last["eventId"], str(conflict.event_id))
+
+	def test_account_page_flags_drift_and_sets_one_password_everywhere(self):
+		self.push(self.machine_a, self.user_create())
+		self.push(self.machine_a, self.credential(self.event_id(), 1, "$2a$10$from-a"))
+		self.push(self.machine_b, self.credential(self.event_id(), 1, "$2a$10$from-b"))
+		self.client.force_login(self.admin)
+
+		overview = self.client.get(self.facility_url("facility-conflicts"))
+		self.assertContains(overview, "sedziah")
+		self.assertContains(overview, "2 different")
+		page = self.client.get(self.facility_url("facility-account-detail", "user-sedziah"))
+		self.assertContains(page, password_fingerprint("$2a$10$from-b"))
+		self.assertNotContains(page, "$2a$10$from-b")
+
+		turned_down = next(v for v in password_versions(self.facility, "user-sedziah") if not v["accepted"])
+		self.client.post(self.facility_url("facility-account-detail", "user-sedziah"), {"version": turned_down["key"]})
+		last = self.pull(self.machine_a)["events"][-1]
+		self.assertEqual(last["payload"]["userCredential"]["passwordHash"], "$2a$10$from-b")
+		self.assertFalse(FacilitySyncConflict.objects.filter(status=ConflictStatus.OPEN).exists())
+		record = FacilityDataRecord.objects.get(table_name="users", record_id="user-sedziah")
+		self.assertEqual((record.payload["username"], record.payload["passwordHash"]), ("sedziah", "$2a$10$from-b"))
+
+	def test_duplicate_usernames_are_flagged(self):
+		self.push(self.machine_a, self.user_create())
+		duplicate = self.user_create()
+		duplicate["entityPublicId"] = "user-sedziah-copy"
+		duplicate["payload"]["user"]["publicId"] = "user-sedziah-copy"
+		self.push(self.machine_b, duplicate)
+		self.client.force_login(self.admin)
+		self.assertContains(self.client.get(self.facility_url("facility-conflicts")), "Duplicate")

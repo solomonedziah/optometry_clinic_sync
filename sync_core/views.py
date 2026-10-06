@@ -18,12 +18,29 @@ from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
+from .conflicts import (
+	PLATFORM_SOURCE_ID,
+	USER_ENTITY,
+	apply_password_everywhere,
+	credential_from_payload,
+	is_older_credential,
+	password_fingerprint,
+	password_versions,
+	record_conflict,
+	resolve_conflict,
+	settle_resent_conflict,
+	staff_accounts,
+	unwrap_payload,
+)
 from .forms import DeviceEnrollmentForm, FacilityForm, InstitutionForm
 from .data_catalog import DATA_TABLE_MAP, DATA_TABLES
 from .models import (
+	ConflictResolution,
+	ConflictStatus,
 	DeviceStatus,
 	Facility,
 	FacilityDataRecord,
+	FacilitySyncConflict,
 	FacilitySyncEntity,
 	FacilitySyncEvent,
 	Institution,
@@ -140,6 +157,7 @@ def facility_detail(request, institution_id, facility_id):
 		"institution": facility.institution,
 		"facility": facility,
 		"devices": facility.devices.all(),
+		"open_conflict_count": FacilitySyncConflict.objects.filter(facility=facility, status=ConflictStatus.OPEN).count(),
 		"form": form,
 		"enrollment": enrollment,
 		"cloud_service_url": request.build_absolute_uri("/").rstrip("/"),
@@ -150,12 +168,12 @@ def _facility_for_institution(institution_id, facility_id):
 	return get_object_or_404(Facility.objects.select_related("institution"), id=facility_id, institution_id=institution_id)
 
 
+def _is_sensitive(key):
+	return any(marker in key.lower() for marker in ("password", "secret", "token", "credential", "private_key"))
+
+
 def _mask_payload(payload):
-	sensitive_markers = ("password", "secret", "token", "credential", "private_key")
-	return {
-		key: "••••••••" if any(marker in key.lower() for marker in sensitive_markers) else value
-		for key, value in payload.items()
-	}
+	return {key: "••••••••" if _is_sensitive(key) else value for key, value in payload.items()}
 
 
 def _display_value(value):
@@ -218,6 +236,103 @@ def facility_data_table(request, institution_id, facility_id, table_name):
 		"columns": columns,
 		"rows": rows,
 		"page": page,
+	})
+
+
+def _comparison_rows(entity_type, server_payload, device_payload):
+	server = unwrap_payload(entity_type, server_payload)
+	device = unwrap_payload(entity_type, device_payload)
+	rows = []
+	for key in sorted(set(server) | set(device)):
+		server_value, device_value = server.get(key), device.get(key)
+		if key == "passwordHash":
+			shown = (password_fingerprint(server_value) or "—", password_fingerprint(device_value) or "—")
+		elif _is_sensitive(key):
+			shown = ("••••••••" if server_value else "—", "••••••••" if device_value else "—")
+		else:
+			shown = (_display_value(server_value), _display_value(device_value))
+		rows.append({
+			"field": key,
+			"server": shown[0],
+			"device": shown[1],
+			"differs": key in server and key in device and server_value != device_value,
+			"only_server": key not in device,
+			"only_device": key not in server,
+		})
+	return rows
+
+
+@login_required
+@require_http_methods(["GET"])
+def facility_conflicts(request, institution_id, facility_id):
+	facility = _facility_for_institution(institution_id, facility_id)
+	conflicts = FacilitySyncConflict.objects.filter(facility=facility).select_related("device", "canonical_device")
+	accounts, duplicates = staff_accounts(facility)
+	return render(request, "sync_core/facility_conflicts.html", {
+		"institution": facility.institution,
+		"facility": facility,
+		"open_conflicts": conflicts.filter(status=ConflictStatus.OPEN),
+		"settled_conflicts": conflicts.exclude(status=ConflictStatus.OPEN).order_by("-resolved_at")[:25],
+		"accounts": accounts,
+		"drifting_accounts": [account for account in accounts if account["passwords_differ"]],
+		"duplicates": duplicates,
+	})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def facility_conflict_detail(request, institution_id, facility_id, conflict_id):
+	facility = _facility_for_institution(institution_id, facility_id)
+	conflict = get_object_or_404(
+		FacilitySyncConflict.objects.select_related("device", "canonical_device", "resolved_by"),
+		pk=conflict_id, facility=facility,
+	)
+	if request.method == "POST":
+		try:
+			resolve_conflict(conflict, choice=request.POST.get("choice"), user=request.user)
+		except (ValueError, FacilitySyncEntity.DoesNotExist) as error:
+			messages.error(request, str(error))
+		else:
+			messages.success(request, "Conflict resolved. Main PCs pick up the decision on their next sync.")
+		return redirect("facility-conflict-detail", institution_id=institution_id, facility_id=facility_id, conflict_id=conflict.pk)
+	is_password = credential_from_payload(conflict.entity_type, conflict.incoming_payload) is not None
+	return render(request, "sync_core/facility_conflict_detail.html", {
+		"institution": facility.institution,
+		"facility": facility,
+		"conflict": conflict,
+		"rows": _comparison_rows(conflict.entity_type, conflict.canonical_payload, conflict.incoming_payload),
+		"is_password": is_password,
+		"is_user": conflict.entity_type == USER_ENTITY,
+	})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def facility_account_detail(request, institution_id, facility_id, public_id):
+	facility = _facility_for_institution(institution_id, facility_id)
+	if not FacilitySyncEntity.objects.filter(facility=facility, entity_type=USER_ENTITY, entity_public_id=public_id).exists():
+		raise Http404("Unknown staff account.")
+	if request.method == "POST":
+		try:
+			_event, chosen = apply_password_everywhere(facility, public_id, request.POST.get("version"), user=request.user)
+		except ValueError as error:
+			messages.error(request, str(error))
+		else:
+			messages.success(request, f"Password {chosen['fingerprint']} sent to every Main PC. It applies on each machine's next sync.")
+		return redirect("facility-account-detail", institution_id=institution_id, facility_id=facility_id, public_id=public_id)
+	accounts, _duplicates = staff_accounts(facility)
+	account = next((item for item in accounts if item["public_id"] == public_id), None)
+	versions = password_versions(facility, public_id)
+	current = next((version for version in versions if version["accepted"]), None)
+	return render(request, "sync_core/facility_account_detail.html", {
+		"institution": facility.institution,
+		"facility": facility,
+		"account": account,
+		"versions": versions,
+		"current": current,
+		"conflicts": FacilitySyncConflict.objects.filter(
+			facility=facility, entity_type=USER_ENTITY, entity_public_id=public_id,
+		).select_related("device"),
 	})
 
 
@@ -395,6 +510,11 @@ def sync_push_api(request):
 				entity_public_id=incoming["entityPublicId"],
 				defaults={"source_device": device},
 			)
+			if is_older_credential(device.facility, incoming):
+				# Acknowledge without applying: the device will pull the newer password.
+				record_conflict(device, incoming, entity, resolution=ConflictResolution.OLDER_CREDENTIAL_IGNORED)
+				accepted_event_ids.append(str(incoming["eventId"]))
+				continue
 			if entity.version != incoming["baseVersion"]:
 				is_equivalent = (
 					entity.version == incoming["entityVersion"]
@@ -404,6 +524,7 @@ def sync_push_api(request):
 				if is_equivalent:
 					accepted_event_ids.append(str(incoming["eventId"]))
 					continue
+				record_conflict(device, incoming, entity)
 				conflicts.append({
 					"eventId": str(incoming["eventId"]),
 					"entityType": incoming["entityType"],
@@ -432,6 +553,7 @@ def sync_push_api(request):
 			entity.source_device = device
 			entity.save()
 			project_sync_event(event)
+			settle_resent_conflict(event.event_id)
 			accepted_event_ids.append(str(event.event_id))
 
 	return Response({"acceptedEventIds": accepted_event_ids, "conflicts": conflicts})
@@ -456,7 +578,7 @@ def sync_pull_api(request):
 		"events": [{
 			"sequence": event.sequence,
 			"eventId": str(event.event_id),
-			"sourceDeviceId": str(event.source_device_id),
+			"sourceDeviceId": str(event.source_device_id) if event.source_device_id else PLATFORM_SOURCE_ID,
 			"entityType": event.entity_type,
 			"entityPublicId": event.entity_public_id,
 			"operation": event.operation,

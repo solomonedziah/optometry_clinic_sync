@@ -41,6 +41,21 @@ urlpatterns = [
         views.facility_data_table,
         name='facility-data-table',
     ),
+    path(
+        'institutions/<uuid:institution_id>/facilities/<uuid:facility_id>/conflicts/',
+        views.facility_conflicts,
+        name='facility-conflicts',
+    ),
+    path(
+        'institutions/<uuid:institution_id>/facilities/<uuid:facility_id>/conflicts/<int:conflict_id>/',
+        views.facility_conflict_detail,
+        name='facility-conflict-detail',
+    ),
+    path(
+        'institutions/<uuid:institution_id>/facilities/<uuid:facility_id>/accounts/<str:public_id>/',
+        views.facility_account_detail,
+        name='facility-account-detail',
+    ),
     path('health', views.health, name='api-health'),
     path('api/devices/enroll', views.enroll_device_api, name='api-device-enroll'),
     path('api/devices/authenticate', views.authenticate_device_api, name='api-device-authenticate'),

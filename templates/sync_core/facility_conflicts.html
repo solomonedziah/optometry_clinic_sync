@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% block title %}Conflicts · {{ facility.name }} · Clinic Sync{% endblock %}
+{% block content %}
+<a class="back-link" href="{% url 'facility-detail' institution.id facility.id %}">← {{ facility.name }}</a>
+<header class="page-header repository-header"><div><p class="eyebrow">{{ institution.code }} / {{ facility.code }} / CONFLICTS</p><h1>Sync conflicts</h1><p>Changes the server turned down because another Main PC changed the same record first, and staff accounts whose passwords differ between machines.</p></div><div class="repository-total"><strong>{{ open_conflicts|length }}</strong><span>need review</span></div></header>
+
+<section class="table-section repository-records">
+  <div class="section-heading"><div><h2>Needs review</h2><p>Open a conflict to compare both versions and choose which one every Main PC should keep.</p></div><span>{{ open_conflicts|length }}</span></div>
+  {% if open_conflicts %}
+  <div class="repository-scroll"><table>
+    <thead><tr><th>Record</th><th>Type</th><th>Sent by</th><th>Built on</th><th>Server at</th><th>Attempts</th><th>First seen</th><th></th></tr></thead>
+    <tbody>{% for conflict in open_conflicts %}<tr>
+      <td><code>{{ conflict.entity_public_id|truncatechars:28 }}</code></td>
+      <td>{{ conflict.entity_type }}</td>
+      <td>{{ conflict.device.device_name|default:'Removed device' }}</td>
+      <td>v{{ conflict.base_version }}</td>
+      <td>v{{ conflict.canonical_version }}</td>
+      <td>{{ conflict.attempts }}</td>
+      <td>{{ conflict.created_at|date:'j M Y, H:i' }}</td>
+      <td><a href="{% url 'facility-conflict-detail' institution.id facility.id conflict.pk %}">Review</a></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}
+  <div class="empty-state"><h3>Nothing to review</h3><p>Conflicts are recorded from the moment this feature went live. Earlier ones stay on the Main PC that hit them.</p></div>
+  {% endif %}
+</section>
+
+<section class="table-section repository-records">
+  <div class="section-heading"><div><h2>Staff accounts</h2><p>The last password each Main PC sent for each account. Pick one account to make a single password apply everywhere.</p></div><span>{{ accounts|length }}</span></div>
+  {% if drifting_accounts %}<p class="note"><strong>{{ drifting_accounts|length }} account{{ drifting_accounts|length|pluralize }}</strong> {{ drifting_accounts|length|pluralize:'has,have' }} different passwords on different machines.</p>{% endif %}
+  {% if duplicates %}<p class="note"><strong>{{ duplicates|length }} username{{ duplicates|length|pluralize }}</strong> {{ duplicates|length|pluralize:'exists,exist' }} as separate accounts created independently on different machines. Those can't be merged from here; they are marked <span class="status open">Duplicate</span> below.</p>{% endif %}
+  {% if accounts %}
+  <div class="repository-scroll"><table>
+    <thead><tr><th>Username</th><th>Name</th><th>Passwords across machines</th><th>Open conflicts</th><th>Account ID</th><th></th></tr></thead>
+    <tbody>{% for account in accounts %}<tr>
+      <td><strong>{{ account.username|default:'—' }}</strong>{% if account.duplicate %} <span class="status open">Duplicate</span>{% endif %}</td>
+      <td>{{ account.name|default:'—' }}</td>
+      <td>{% if account.passwords_differ %}<span class="status drift">{{ account.password_count }} different</span>{% elif account.password_count %}<span class="status resolved">Same</span>{% else %}<span class="status neutral">None sent</span>{% endif %}</td>
+      <td>{{ account.open_conflicts }}</td>
+      <td><code>{{ account.public_id|truncatechars:20 }}</code></td>
+      <td><a href="{% url 'facility-account-detail' institution.id facility.id account.public_id %}">Passwords</a></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}
+  <div class="empty-state"><h3>No synced accounts</h3><p>Accounts appear once a Main PC pushes its users.</p></div>
+  {% endif %}
+</section>
+
+<section class="table-section repository-records">
+  <div class="section-heading"><div><h2>Recently settled</h2><p>Resolved by an administrator or settled automatically by the server.</p></div><span>{{ settled_conflicts|length }}</span></div>
+  {% if settled_conflicts %}
+  <div class="repository-scroll"><table>
+    <thead><tr><th>Record</th><th>Type</th><th>Sent by</th><th>Outcome</th><th>Settled</th><th></th></tr></thead>
+    <tbody>{% for conflict in settled_conflicts %}<tr>
+      <td><code>{{ conflict.entity_public_id|truncatechars:28 }}</code></td>
+      <td>{{ conflict.entity_type }}</td>
+      <td>{{ conflict.device.device_name|default:'Removed device' }}</td>
+      <td><span class="status {{ conflict.status }}">{{ conflict.get_resolution_display|default:conflict.get_status_display }}</span></td>
+      <td>{{ conflict.resolved_at|date:'j M Y, H:i'|default:'—' }}</td>
+      <td><a href="{% url 'facility-conflict-detail' institution.id facility.id conflict.pk %}">View</a></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}
+  <div class="empty-state"><h3>No settled conflicts yet</h3><p>Resolved conflicts are listed here for reference.</p></div>
+  {% endif %}
+</section>
+{% endblock %}

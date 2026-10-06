@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+{% block title %}{{ account.username|default:'Account' }} passwords · {{ facility.name }} · Clinic Sync{% endblock %}
+{% block content %}
+<a class="back-link" href="{% url 'facility-conflicts' institution.id facility.id %}">← Sync conflicts</a>
+<header class="page-header"><div><p class="eyebrow">{{ institution.code }} / {{ facility.code }} / STAFF ACCOUNT</p><h1>{{ account.username|default:'Unnamed account' }}</h1><p>{{ account.name|default:'No name synced' }} · <code>{{ account.public_id }}</code></p></div>{% if account.passwords_differ %}<span class="status drift">{{ account.password_count }} passwords in use</span>{% endif %}</header>
+
+{% if account.duplicate %}<p class="message error">Another account with the username “{{ account.username }}” was created separately on a different machine. Each machine keeps its own copy and its own password, and a password set here only reaches machines that have this account ID. Fixing that needs a change in the desktop app.</p>{% endif %}
+
+<section class="table-section repository-records">
+  <div class="section-heading"><div><h2>Last password per machine</h2><p>The most recent password each Main PC sent. A machine may have since picked up a newer one from another machine.</p></div></div>
+  {% if account.device_passwords %}
+  <div class="repository-scroll"><table>
+    <thead><tr><th>Main PC</th><th>Password</th><th>Sent</th><th>Server</th></tr></thead>
+    <tbody>{% for version in account.device_passwords %}<tr>
+      <td><strong>{{ version.device.device_name }}</strong></td>
+      <td><code>{{ version.fingerprint }}</code></td>
+      <td>{{ version.at|date:'j M Y, H:i' }}</td>
+      <td>{% if version.accepted %}<span class="status resolved">Accepted</span>{% else %}<span class="status open">Turned down</span>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}
+  <div class="empty-state"><h3>No passwords synced</h3><p>No Main PC has sent a password for this account.</p></div>
+  {% endif %}
+</section>
+
+<section class="table-section repository-records">
+  <div class="section-heading"><div><h2>Make one password apply everywhere</h2><p>Every password ever sent for this account, newest first. Choosing one sends it to every Main PC; the staff member then signs in with that password on all machines.</p></div><span>{{ versions|length }}</span></div>
+  {% if current %}<p class="note">The server currently holds <code>{{ current.fingerprint }}</code>.</p>{% endif %}
+  {% if versions %}
+  <div class="repository-scroll"><table>
+    <thead><tr><th>Password</th><th>From</th><th>Sent</th><th>Server</th><th></th></tr></thead>
+    <tbody>{% for version in versions %}<tr>
+      <td><code>{{ version.fingerprint }}</code>{% if current and version.key == current.key %} <span class="status resolved">Current</span>{% endif %}</td>
+      <td>{% if version.from_platform %}Sync platform{% else %}{{ version.device.device_name|default:'Removed device' }}{% endif %}</td>
+      <td>{{ version.at|date:'j M Y, H:i' }}</td>
+      <td>{% if version.accepted %}Accepted · v{{ version.version }}{% else %}Turned down{% endif %}</td>
+      <td><form method="post" class="inline-form" onsubmit="return confirm('Send password {{ version.fingerprint }} to every Main PC? Anyone signed in with a different password for {{ account.username|default:'this account'|escapejs }} will need this one.')">{% csrf_token %}<input type="hidden" name="version" value="{{ version.key }}"><button class="secondary-button" type="submit">Use everywhere</button></form></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}
+  <div class="empty-state"><h3>Nothing to choose from</h3><p>No password has been synced for this account yet.</p></div>
+  {% endif %}
+</section>
+
+{% if conflicts %}
+<section class="table-section repository-records">
+  <div class="section-heading"><div><h2>Conflicts on this account</h2></div><span>{{ conflicts|length }}</span></div>
+  <div class="repository-scroll"><table>
+    <thead><tr><th>Sent by</th><th>First seen</th><th>Status</th><th></th></tr></thead>
+    <tbody>{% for conflict in conflicts %}<tr>
+      <td>{{ conflict.device.device_name|default:'Removed device' }}</td>
+      <td>{{ conflict.created_at|date:'j M Y, H:i' }}</td>
+      <td><span class="status {{ conflict.status }}">{{ conflict.get_resolution_display|default:conflict.get_status_display }}</span></td>
+      <td><a href="{% url 'facility-conflict-detail' institution.id facility.id conflict.pk %}">View</a></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+{% endblock %}

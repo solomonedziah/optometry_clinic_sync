@@ -1,5 +1,6 @@
 import uuid
 
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
@@ -154,7 +155,8 @@ class FacilitySyncEntity(models.Model):
 class FacilitySyncEvent(models.Model):
 	sequence = models.BigAutoField(primary_key=True)
 	facility = models.ForeignKey(Facility, on_delete=models.CASCADE, related_name="sync_events")
-	source_device = models.ForeignKey(Device, on_delete=models.PROTECT, related_name="sync_events")
+	# Null when the event was issued from the sync platform itself (a conflict resolution).
+	source_device = models.ForeignKey(Device, on_delete=models.PROTECT, null=True, blank=True, related_name="sync_events")
 	event_id = models.UUIDField(unique=True)
 	entity_type = models.CharField(max_length=100)
 	entity_public_id = models.CharField(max_length=160)
@@ -167,6 +169,52 @@ class FacilitySyncEvent(models.Model):
 	class Meta:
 		ordering = ["sequence"]
 		indexes = [models.Index(fields=["facility", "sequence"], name="facility_sync_cursor_idx")]
+
+
+class ConflictStatus(models.TextChoices):
+	OPEN = "open", "Needs review"
+	RESOLVED = "resolved", "Resolved"
+	AUTO_RESOLVED = "auto_resolved", "Settled automatically"
+
+
+class ConflictResolution(models.TextChoices):
+	KEPT_SERVER = "kept_server", "Kept the server version"
+	APPLIED_DEVICE = "applied_device", "Applied the device version"
+	DEVICE_RESENT = "device_resent", "Device re-sent its change on top"
+	OLDER_CREDENTIAL_IGNORED = "older_credential_ignored", "Older password change ignored"
+
+
+class FacilitySyncConflict(models.Model):
+	"""A pushed event the server rejected because the device built it on an outdated version."""
+
+	id = models.BigAutoField(primary_key=True)
+	facility = models.ForeignKey(Facility, on_delete=models.CASCADE, related_name="sync_conflicts")
+	device = models.ForeignKey(Device, on_delete=models.SET_NULL, null=True, blank=True, related_name="sync_conflicts")
+	event_id = models.UUIDField(unique=True)
+	entity_type = models.CharField(max_length=100)
+	entity_public_id = models.CharField(max_length=160)
+	operation = models.CharField(max_length=16)
+	base_version = models.PositiveBigIntegerField()
+	incoming_payload = models.JSONField(default=dict)
+	canonical_version = models.PositiveBigIntegerField()
+	canonical_payload = models.JSONField(default=dict)
+	canonical_deleted = models.BooleanField(default=False)
+	canonical_device = models.ForeignKey(Device, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+	attempts = models.PositiveIntegerField(default=1)
+	status = models.CharField(max_length=16, choices=ConflictStatus, default=ConflictStatus.OPEN)
+	resolution = models.CharField(max_length=32, choices=ConflictResolution, blank=True)
+	resolution_event_id = models.UUIDField(null=True, blank=True)
+	resolved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+	resolved_at = models.DateTimeField(null=True, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ["-created_at"]
+		indexes = [
+			models.Index(fields=["facility", "status"], name="facility_conflict_status_idx"),
+			models.Index(fields=["facility", "entity_type", "entity_public_id"], name="facility_conflict_entity_idx"),
+		]
 
 
 class LargeFileObject(models.Model):

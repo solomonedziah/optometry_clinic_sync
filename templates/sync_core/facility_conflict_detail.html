@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% block title %}Conflict {{ conflict.pk }} · {{ facility.name }} · Clinic Sync{% endblock %}
+{% block content %}
+<a class="back-link" href="{% url 'facility-conflicts' institution.id facility.id %}">← Sync conflicts</a>
+<header class="page-header"><div><p class="eyebrow">{{ conflict.entity_type }} / {{ conflict.operation }}</p><h1>{% if is_password %}Password conflict{% else %}Conflicting change{% endif %}</h1><p><code>{{ conflict.entity_public_id }}</code>{% if is_user %} · <a href="{% url 'facility-account-detail' institution.id facility.id conflict.entity_public_id %}">All passwords for this account</a>{% endif %}</p></div><span class="status {{ conflict.status }}">{{ conflict.get_status_display }}</span></header>
+
+<div class="compare-meta">
+  <div><p class="eyebrow">Server version · v{{ conflict.canonical_version }}</p><strong>{% if conflict.canonical_device %}{{ conflict.canonical_device.device_name }}{% else %}Sync platform or unknown{% endif %}</strong><p>What every Main PC currently receives.{% if conflict.canonical_deleted %} The record is deleted on the server.{% endif %}</p></div>
+  <div><p class="eyebrow">Turned-down change · built on v{{ conflict.base_version }}</p><strong>{{ conflict.device.device_name|default:'Removed device' }}</strong><p>Sent {{ conflict.created_at|date:'j M Y, H:i' }}{% if conflict.attempts > 1 %}, {{ conflict.attempts }} attempts{% endif %}.</p></div>
+</div>
+
+<section class="table-section repository-records">
+  <div class="section-heading"><div><h2>Field by field</h2><p>Highlighted rows differ. Passwords show as a short fingerprint: the same fingerprint means the same password.</p></div></div>
+  <div class="repository-scroll"><table>
+    <thead><tr><th>Field</th><th>Server version</th><th>Turned-down change</th></tr></thead>
+    <tbody>{% for row in rows %}<tr class="{% if row.differs %}differs{% endif %}">
+      <td><code>{{ row.field }}</code></td>
+      <td class="wrap{% if row.only_device %} missing{% endif %}">{% if row.only_device %}not included{% else %}{{ row.server }}{% endif %}</td>
+      <td class="wrap{% if row.only_server %} missing{% endif %}">{% if row.only_server %}not included{% else %}{{ row.device }}{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+{% if conflict.status == 'open' %}
+<section class="form-section">
+  <div class="section-heading"><div><h2>Decide</h2><p>Your choice is sent to every Main PC in {{ facility.name }} on its next sync.</p></div></div>
+  <div class="decision-grid">
+    <form method="post">{% csrf_token %}<input type="hidden" name="choice" value="server"><p><strong>Keep the server version.</strong> {% if is_password %}The server password is re-sent to every machine so the ones that drifted come back in line.{% else %}Nothing new is sent. {{ conflict.device.device_name|default:'The device' }} keeps its change parked until someone clears it there.{% endif %}</p><button class="secondary-button" type="submit">Keep server version</button></form>
+    <form method="post">{% csrf_token %}<input type="hidden" name="choice" value="device"><p><strong>Use {{ conflict.device.device_name|default:'the device' }}'s change.</strong> It becomes v{{ conflict.canonical_version|add:1 }} and replaces the server version on every machine{% if not is_password %} whose copy is up to date{% endif %}.</p><button class="primary-button" type="submit">Use this change</button></form>
+  </div>
+  {% if not is_password %}<p class="note decision-note">Main PCs that are themselves behind on this record may hold the update back until their own conflict is cleared on that machine.</p>{% endif %}
+</section>
+{% else %}
+<section class="token-section"><p class="eyebrow">Outcome</p><h2>{{ conflict.get_resolution_display|default:conflict.get_status_display }}</h2><p>{% if conflict.resolved_by %}By {{ conflict.resolved_by.get_username }}{% else %}Settled by the server{% endif %} on {{ conflict.resolved_at|date:'j M Y, H:i' }}.{% if conflict.resolution == 'older_credential_ignored' %} The machine sent a password change older than one the server already had, so it was acknowledged but not applied. That machine picks up the newer password on its next sync.{% elif conflict.resolution == 'device_resent' %} The machine re-sent its change on top of the server version and it was accepted.{% endif %}{% if conflict.resolution_event_id %} Event <code>{{ conflict.resolution_event_id }}</code>.{% endif %}</p></section>
+{% endif %}
+{% endblock %}

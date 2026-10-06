@@ -131,6 +131,14 @@ def project_sync_event(event):
     payload = event.payload.get(payload_key, event.payload) if payload_key else event.payload
     if not isinstance(payload, dict):
         payload = event.payload
+    # A password-only change must not replace the mirrored profile fields.
+    credential = event.payload.get("userCredential") if event.entity_type == "user" else None
+    if isinstance(credential, dict):
+        existing = FacilityDataRecord.objects.filter(
+            facility=event.facility, table_name=table_name, record_id=event.entity_public_id,
+        ).values_list("payload", flat=True).first()
+        base = existing if isinstance(existing, dict) and "userCredential" not in existing else {}
+        payload = {**base, **credential}
 
     record, created = FacilityDataRecord.objects.select_for_update().get_or_create(
         facility=event.facility,
