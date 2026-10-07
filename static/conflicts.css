@@ -130,3 +130,109 @@
 .decision-note {
   margin-top: 16px;
 }
+
+/* System Logs */
+.log-totals {
+  display: flex;
+  gap: 22px;
+}
+
+.log-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 17px;
+}
+
+.log-filters .form-actions {
+  gap: 10px;
+  align-items: center;
+}
+
+.log-filters .secondary-button {
+  display: inline-flex;
+  align-items: center;
+}
+
+.log-table td {
+  vertical-align: top;
+}
+
+.log-table summary {
+  cursor: pointer;
+  list-style-position: outside;
+}
+
+.log-table summary:hover {
+  color: #0c544b;
+}
+
+.log-table tr.log-error td,
+.log-table tr.log-critical td {
+  background: #fcf1f1;
+}
+
+.level {
+  display: inline-block;
+  padding: 3px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #3f5752;
+  background: #e3ebe7;
+}
+
+.level.warning {
+  color: #765915;
+  background: #f5eac8;
+}
+
+.level.error,
+.level.critical {
+  color: #8c3030;
+  background: #f5dddd;
+}
+
+.level.debug {
+  color: #687c77;
+  background: #f1f4f2;
+}
+
+.log-detail {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 12px 0 4px;
+  font-size: 12px;
+}
+
+.log-detail dt {
+  color: #687c77;
+  font-weight: 700;
+}
+
+.log-detail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.log-detail pre {
+  max-height: 360px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid #d7e1dd;
+  background: #f7f9f8;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 720px) {
+  .log-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .log-totals {
+    flex-direction: column;
+    gap: 12px;
+  }
+}

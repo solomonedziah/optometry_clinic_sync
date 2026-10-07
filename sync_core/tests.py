@@ -21,6 +21,7 @@ from .models import (
 	FacilitySyncEntity,
 	FacilitySyncEvent,
 	Institution,
+	SystemLog,
 )
 from .services import create_pending_device
 
@@ -516,3 +517,60 @@ class ConflictResolutionTests(TestCase):
 		self.push(self.machine_b, duplicate)
 		self.client.force_login(self.admin)
 		self.assertContains(self.client.get(self.facility_url("facility-conflicts")), "Duplicate")
+
+
+class SystemLogTests(TestCase):
+	def setUp(self):
+		institution = Institution.objects.create(name="University of Cape Coast", code="UCC")
+		self.facility = Facility.objects.create(institution=institution, name="Optometry Eye Clinic", code="EYE")
+		self.admin = get_user_model().objects.create_user(username="admin", password="temporary-password")
+
+	def enroll(self, name):
+		_device, token, _ = create_pending_device(self.facility, device_name=name)
+		body = self.client.post(reverse("api-device-enroll"), {
+			"token": token,
+			"installationId": str(uuid.uuid4()),
+			"deviceName": name,
+			"platform": "win32",
+			"appVersion": "1.0.0",
+		}, content_type="application/json").json()
+		return {"HTTP_AUTHORIZATION": f"Bearer {body['accessToken']}"}
+
+	def test_disallowed_host_is_logged_with_the_host(self):
+		response = self.client.get(reverse("api-health"), HTTP_HOST="web-production-old.up.railway.app")
+		self.assertEqual(response.status_code, 400)
+		log = SystemLog.objects.get(source="django.security.DisallowedHost")
+		self.assertEqual(log.level_name, "ERROR")
+		self.assertEqual(log.host, "web-production-old.up.railway.app")
+		self.assertEqual(log.status_code, 400)
+		self.assertIn("web-production-old.up.railway.app", log.message)
+
+	def test_sync_activity_and_failures_are_attributed_to_the_device(self):
+		headers = self.enroll("Main PC A")
+		event = {
+			"eventId": str(uuid.uuid4()), "entityType": "patient", "entityPublicId": "patient-1", "operation": "create",
+			"baseVersion": 0, "entityVersion": 1, "payload": {"patient": {"firstName": "Ama"}},
+		}
+		self.client.post(reverse("api-sync-push"), {"events": [event]}, content_type="application/json", **headers)
+		self.client.post(reverse("api-sync-push"), {"events": [{**event, "eventId": str(uuid.uuid4()), "payload": {"patient": {"firstName": "Efua"}}}]}, content_type="application/json", **headers)
+
+		self.assertTrue(SystemLog.objects.filter(source="sync_core.api", message__startswith="Main PC A enrolled").exists())
+		push = SystemLog.objects.filter(message__startswith="Push from Main PC A").first()
+		self.assertEqual((push.device.device_name, push.facility, push.level_name), ("Main PC A", self.facility, "INFO"))
+		conflict = SystemLog.objects.get(message__startswith="Conflict:")
+		self.assertEqual(conflict.level_name, "WARNING")
+		self.assertNotIn("Efua", "".join(SystemLog.objects.values_list("message", flat=True)))
+
+		self.client.post(reverse("api-sync-push"), {"events": []}, content_type="application/json")
+		unauthorized = SystemLog.objects.get(source="django.request", status_code=401)
+		self.assertEqual((unauthorized.method, unauthorized.path), ("POST", "/api/sync/push"))
+
+	def test_logs_page_requires_login_and_filters(self):
+		self.assertEqual(self.client.get(reverse("system-logs")).status_code, 302)
+		self.client.get(reverse("api-health"), HTTP_HOST="bad.example")
+		self.client.force_login(self.admin)
+		page = self.client.get(reverse("system-logs"))
+		self.assertContains(page, "System Logs")
+		self.assertContains(page, "bad.example")
+		self.assertNotContains(self.client.get(reverse("system-logs"), {"q": "nothing-matches-this"}), "bad.example</code>")
+		self.assertNotContains(self.client.get(reverse("system-logs"), {"source": "sync_core.admin"}), "bad.example</code>")

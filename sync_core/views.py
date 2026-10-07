@@ -1,8 +1,11 @@
 import json
 import hashlib
+import logging
 import os
 import re
 import tempfile
+import uuid
+from datetime import timedelta
 from pathlib import Path
 
 from django.contrib import messages
@@ -10,9 +13,10 @@ from django.contrib.auth.decorators import login_required
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 from rest_framework import status
 from rest_framework.decorators import api_view
@@ -37,6 +41,7 @@ from .data_catalog import DATA_TABLE_MAP, DATA_TABLES
 from .models import (
 	ConflictResolution,
 	ConflictStatus,
+	Device,
 	DeviceStatus,
 	Facility,
 	FacilityDataRecord,
@@ -46,6 +51,7 @@ from .models import (
 	Institution,
 	LargeFileObject,
 	LargeFileReference,
+	SystemLog,
 )
 from .serializers import (
 	AuthenticateDeviceSerializer,
@@ -63,6 +69,10 @@ from .services import (
 	issue_access_token,
 	project_sync_event,
 )
+
+
+logger = logging.getLogger("sync_core.api")
+admin_logger = logging.getLogger("sync_core.admin")
 
 
 def device_payload(device):
@@ -86,7 +96,10 @@ def _authenticated_device(request):
 	authorization = request.headers.get("Authorization", "")
 	if not authorization.startswith("Bearer "):
 		return None
-	return device_from_access_token(authorization.removeprefix("Bearer ").strip())
+	device = device_from_access_token(authorization.removeprefix("Bearer ").strip())
+	# Lets Django's request logging (and the System Logs page) name the device.
+	getattr(request, "_request", request).sync_device = device
+	return device
 
 
 def _large_file_key(oid):
@@ -147,6 +160,10 @@ def facility_detail(request, institution_id, facility_id):
 	enrollment = request.session.pop("enrollment", None)
 	if request.method == "POST" and form.is_valid():
 		device, token, expires_at = create_pending_device(facility, **form.cleaned_data)
+		admin_logger.info(
+			"%s created an enrollment token for %s", request.user.get_username(), device.device_name,
+			extra={"facility": facility, "device": device, "request": request},
+		)
 		request.session["enrollment"] = {
 			"device_name": device.device_name,
 			"token": token,
@@ -239,6 +256,68 @@ def facility_data_table(request, institution_id, facility_id, table_name):
 	})
 
 
+LOG_SOURCES = [
+	("sync_core.api", "Device API"),
+	("sync_core.admin", "Admin actions"),
+	("django.request", "HTTP errors"),
+	("django.security", "Security"),
+]
+LOG_LEVELS = [("debug", logging.DEBUG), ("info", logging.INFO), ("warning", logging.WARNING), ("error", logging.ERROR)]
+LOG_PERIODS = [("1h", "Last hour", timedelta(hours=1)), ("24h", "Last 24 hours", timedelta(days=1)), ("7d", "Last 7 days", timedelta(days=7)), ("all", "Everything kept", None)]
+
+
+@login_required
+@require_http_methods(["GET"])
+def system_logs(request):
+	filters = {
+		"level": request.GET.get("level", "info"),
+		"source": request.GET.get("source", ""),
+		"facility": request.GET.get("facility", ""),
+		"device": request.GET.get("device", ""),
+		"period": request.GET.get("period", "24h"),
+		"q": request.GET.get("q", "").strip(),
+	}
+	logs = SystemLog.objects.select_related("facility", "device")
+	logs = logs.filter(level__gte=dict(LOG_LEVELS).get(filters["level"], logging.INFO))
+	if filters["source"]:
+		logs = logs.filter(source__startswith=filters["source"])
+	if filters["facility"]:
+		logs = logs.filter(facility_id=filters["facility"]) if _is_uuid(filters["facility"]) else logs.none()
+	if filters["device"]:
+		logs = logs.filter(device_id=filters["device"]) if _is_uuid(filters["device"]) else logs.none()
+	period = next((delta for key, _label, delta in LOG_PERIODS if key == filters["period"]), timedelta(days=1))
+	if period is not None:
+		logs = logs.filter(created_at__gte=timezone.now() - period)
+	if filters["q"]:
+		logs = logs.filter(Q(message__icontains=filters["q"]) | Q(path__icontains=filters["q"]) | Q(host__icontains=filters["q"]))
+
+	last_day = SystemLog.objects.filter(created_at__gte=timezone.now() - timedelta(days=1))
+	page = Paginator(logs, 100).get_page(request.GET.get("page"))
+	query = request.GET.copy()
+	query.pop("page", None)
+	return render(request, "sync_core/system_logs.html", {
+		"page": page,
+		"filters": filters,
+		"query": query.urlencode(),
+		"levels": [name for name, _value in LOG_LEVELS],
+		"sources": LOG_SOURCES,
+		"periods": [(key, label) for key, label, _delta in LOG_PERIODS],
+		"facilities": Facility.objects.select_related("institution"),
+		"devices": Device.objects.select_related("facility").order_by("device_name"),
+		"errors_today": last_day.filter(level__gte=logging.ERROR).count(),
+		"warnings_today": last_day.filter(level=logging.WARNING).count(),
+		"retention_days": settings.SYSTEM_LOG_RETENTION_DAYS,
+	})
+
+
+def _is_uuid(value):
+	try:
+		uuid.UUID(value)
+	except ValueError:
+		return False
+	return True
+
+
 def _comparison_rows(entity_type, server_payload, device_payload):
 	server = unwrap_payload(entity_type, server_payload)
 	device = unwrap_payload(entity_type, device_payload)
@@ -293,6 +372,11 @@ def facility_conflict_detail(request, institution_id, facility_id, conflict_id):
 		except (ValueError, FacilitySyncEntity.DoesNotExist) as error:
 			messages.error(request, str(error))
 		else:
+			admin_logger.info(
+				"%s resolved conflict #%s on %s %s: %s",
+				request.user.get_username(), conflict.pk, conflict.entity_type, conflict.entity_public_id, request.POST.get("choice"),
+				extra={"facility": facility, "request": request},
+			)
 			messages.success(request, "Conflict resolved. Main PCs pick up the decision on their next sync.")
 		return redirect("facility-conflict-detail", institution_id=institution_id, facility_id=facility_id, conflict_id=conflict.pk)
 	is_password = credential_from_payload(conflict.entity_type, conflict.incoming_payload) is not None
@@ -318,6 +402,10 @@ def facility_account_detail(request, institution_id, facility_id, public_id):
 		except ValueError as error:
 			messages.error(request, str(error))
 		else:
+			admin_logger.info(
+				"%s sent password %s for user %s to every Main PC", request.user.get_username(), chosen["fingerprint"], public_id,
+				extra={"facility": facility, "request": request},
+			)
 			messages.success(request, f"Password {chosen['fingerprint']} sent to every Main PC. It applies on each machine's next sync.")
 		return redirect("facility-account-detail", institution_id=institution_id, facility_id=facility_id, public_id=public_id)
 	accounts, _duplicates = staff_accounts(facility)
@@ -354,10 +442,12 @@ def enroll_device_api(request):
 			app_version=data["appVersion"],
 		)
 	except ValueError as error:
+		logger.warning("Enrollment refused: %s", str(error), extra={"context": {"installationId": str(data["installationId"]), "appVersion": data["appVersion"]}})
 		if str(error) == "INSTALLATION_ALREADY_BOUND":
 			return Response({"error": "This installation is already registered to another device."}, status=status.HTTP_409_CONFLICT)
 		return Response({"error": "Enrollment token is invalid, expired, or already used."}, status=status.HTTP_400_BAD_REQUEST)
 
+	logger.info("%s enrolled (app %s, %s)", device.device_name, data["appVersion"], data["platform"], extra={"device": device})
 	return Response({
 		"institution": {"id": str(device.facility.institution_id), "name": device.facility.institution.name},
 		"facility": {"id": str(device.facility_id), "name": device.facility.name},
@@ -381,6 +471,7 @@ def authenticate_device_api(request):
 	)
 	if device is None:
 		return Response({"error": "Invalid device credentials."}, status=status.HTTP_401_UNAUTHORIZED)
+	logger.debug("%s signed in", device.device_name, extra={"device": device})
 	return Response({"accessToken": issue_access_token(device), "expiresIn": ACCESS_TOKEN_MAX_AGE})
 
 
@@ -474,6 +565,11 @@ def large_file_object_api(request, oid):
 				entity_public_id=entity_public_id,
 				defaults={"file_name": file_name},
 			)
+		logger.info(
+			"%s %s file %s (%s bytes) for %s %s",
+			device.device_name, "uploaded" if created else "re-sent", file_name, size_bytes, entity_type, entity_public_id,
+			extra={"device": device, "context": {"oid": oid, "deduplicated": deduplicated or not created}},
+		)
 		return Response({
 			"uploaded": created,
 			"deduplicated": deduplicated or not created,
@@ -513,6 +609,10 @@ def sync_push_api(request):
 			if is_older_credential(device.facility, incoming):
 				# Acknowledge without applying: the device will pull the newer password.
 				record_conflict(device, incoming, entity, resolution=ConflictResolution.OLDER_CREDENTIAL_IGNORED)
+				logger.warning(
+					"Ignored an older password change from %s for user %s", device.device_name, incoming["entityPublicId"],
+					extra={"device": device, "context": {"eventId": str(incoming["eventId"])}},
+				)
 				accepted_event_ids.append(str(incoming["eventId"]))
 				continue
 			if entity.version != incoming["baseVersion"]:
@@ -525,6 +625,11 @@ def sync_push_api(request):
 					accepted_event_ids.append(str(incoming["eventId"]))
 					continue
 				record_conflict(device, incoming, entity)
+				logger.warning(
+					"Conflict: %s changed %s %s from v%s, but the server is at v%s",
+					device.device_name, incoming["entityType"], incoming["entityPublicId"], incoming["baseVersion"], entity.version,
+					extra={"device": device, "context": {"eventId": str(incoming["eventId"])}},
+				)
 				conflicts.append({
 					"eventId": str(incoming["eventId"]),
 					"entityType": incoming["entityType"],
@@ -556,6 +661,12 @@ def sync_push_api(request):
 			settle_resent_conflict(event.event_id)
 			accepted_event_ids.append(str(event.event_id))
 
+	if serializer.validated_data["events"]:
+		logger.info(
+			"Push from %s: %s event(s), %s accepted, %s conflict(s)",
+			device.device_name, len(serializer.validated_data["events"]), len(accepted_event_ids), len(conflicts),
+			extra={"device": device},
+		)
 	return Response({"acceptedEventIds": accepted_event_ids, "conflicts": conflicts})
 
 
@@ -574,6 +685,11 @@ def sync_pull_api(request):
 		.select_related("source_device")
 		.order_by("sequence")[:limit]
 	)
+	if events:
+		logger.info(
+			"Pull by %s: %s event(s) after #%s", device.device_name, len(events), after,
+			extra={"device": device, "context": {"latestSequence": events[-1].sequence}},
+		)
 	return Response({
 		"events": [{
 			"sequence": event.sequence,
@@ -631,4 +747,8 @@ def repository_records_api(request):
 				record.source_updated_at = incoming.get("sourceUpdatedAt")
 				record.save()
 			accepted += 1
+	logger.info(
+		"Repository snapshot from %s: %s accepted, %s skipped", device.device_name, accepted, skipped,
+		extra={"device": device},
+	)
 	return Response({"accepted": accepted, "skipped": skipped})

@@ -17,7 +17,7 @@
   <div class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="{% url 'institution-list' %}"><span class="brand-mark">CS</span><strong>Clinic Sync</strong></a>
-      <nav><a class="nav-item" href="{% url 'institution-list' %}">Institutions</a></nav>
+      <nav><a class="nav-item" href="{% url 'institution-list' %}">Institutions</a>{% if user.is_authenticated %}<a class="nav-item" href="{% url 'system-logs' %}">System Logs</a>{% endif %}</nav>
       {% if user.is_authenticated %}
         <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="nav-item logout" type="submit">Sign out</button></form>
       {% endif %}

@@ -155,3 +155,25 @@ REST_FRAMEWORK = {
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+SYSTEM_LOG_RETENTION_DAYS = int(os.getenv("SYSTEM_LOG_RETENTION_DAYS", "30"))
+SYSTEM_LOG_LEVEL = os.getenv("SYSTEM_LOG_LEVEL", "INFO").upper()
+
+# Every record also goes to stdout, so it shows in the Railway deploy logs.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "plain": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "plain"},
+        "database": {"class": "sync_core.log_handler.DatabaseLogHandler"},
+    },
+    "root": {"handlers": ["console"], "level": "WARNING"},
+    "loggers": {
+        "sync_core": {"handlers": ["console", "database"], "level": SYSTEM_LOG_LEVEL, "propagate": False},
+        "django.request": {"handlers": ["console", "database"], "level": "WARNING", "propagate": False},
+        "django.security": {"handlers": ["console", "database"], "level": "WARNING", "propagate": False},
+    },
+}

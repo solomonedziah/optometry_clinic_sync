@@ -243,3 +243,28 @@ class LargeFileReference(models.Model):
 			),
 		]
 		indexes = [models.Index(fields=["facility", "entity_type", "entity_public_id"], name="facility_lfs_entity_idx")]
+
+
+class SystemLog(models.Model):
+	"""A server log record, written by sync_core.log_handler.DatabaseLogHandler."""
+
+	id = models.BigAutoField(primary_key=True)
+	created_at = models.DateTimeField(default=timezone.now, db_index=True)
+	level = models.PositiveSmallIntegerField(db_index=True)
+	level_name = models.CharField(max_length=16)
+	source = models.CharField(max_length=120)
+	message = models.TextField()
+	method = models.CharField(max_length=10, blank=True)
+	path = models.CharField(max_length=300, blank=True)
+	host = models.CharField(max_length=200, blank=True)
+	status_code = models.PositiveSmallIntegerField(null=True, blank=True)
+	client_ip = models.CharField(max_length=64, blank=True)
+	username = models.CharField(max_length=150, blank=True)
+	facility = models.ForeignKey(Facility, on_delete=models.SET_NULL, null=True, blank=True, related_name="system_logs")
+	device = models.ForeignKey(Device, on_delete=models.SET_NULL, null=True, blank=True, related_name="system_logs")
+	context = models.JSONField(default=dict, blank=True)
+	traceback = models.TextField(blank=True)
+
+	class Meta:
+		ordering = ["-created_at", "-id"]
+		indexes = [models.Index(fields=["level", "-created_at"], name="system_log_level_idx")]

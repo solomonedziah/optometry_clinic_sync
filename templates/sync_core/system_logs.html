@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% block title %}System Logs · Clinic Sync{% endblock %}
+{% block content %}
+<header class="page-header repository-header"><div><p class="eyebrow">Administration</p><h1>System Logs</h1><p>Everything the sync server records: device sign-ins, pushes and pulls, conflicts, administrator actions, failed requests and crashes. Kept for {{ retention_days }} days.</p></div><div class="log-totals"><div class="repository-total"><strong>{{ errors_today }}</strong><span>errors, last 24h</span></div><div class="repository-total"><strong>{{ warnings_today }}</strong><span>warnings, last 24h</span></div></div></header>
+
+<form method="get" class="form-section log-filters">
+  <label>Level<select name="level">{% for level in levels %}<option value="{{ level }}"{% if filters.level == level %} selected{% endif %}>{{ level|capfirst }} and above</option>{% endfor %}</select></label>
+  <label>Period<select name="period">{% for key, label in periods %}<option value="{{ key }}"{% if filters.period == key %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+  <label>Source<select name="source"><option value="">All sources</option>{% for key, label in sources %}<option value="{{ key }}"{% if filters.source == key %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+  <label>Facility<select name="facility"><option value="">All facilities</option>{% for facility in facilities %}<option value="{{ facility.id }}"{% if filters.facility == facility.id|stringformat:'s' %} selected{% endif %}>{{ facility.institution.code }} / {{ facility.name }}</option>{% endfor %}</select></label>
+  <label>Main PC<select name="device"><option value="">All devices</option>{% for device in devices %}<option value="{{ device.id }}"{% if filters.device == device.id|stringformat:'s' %} selected{% endif %}>{{ device.device_name }}</option>{% endfor %}</select></label>
+  <label>Search<input type="search" name="q" value="{{ filters.q }}" placeholder="Message, path or host"></label>
+  <div class="form-actions"><a class="secondary-button" href="{% url 'system-logs' %}">Reset</a><button class="primary-button" type="submit">Apply</button></div>
+</form>
+
+<section class="table-section repository-records">
+  <div class="section-heading"><div><h2>Entries</h2><p>Newest first. Select an entry with ▸ to see its details.</p></div><span>{{ page.paginator.count }}</span></div>
+  {% if page.object_list %}
+  <div class="repository-scroll"><table class="log-table">
+    <thead><tr><th>Time (UTC)</th><th>Level</th><th>Source</th><th>Main PC</th><th>Message</th></tr></thead>
+    <tbody>{% for log in page.object_list %}<tr class="log-{{ log.level_name|lower }}">
+      <td>{{ log.created_at|date:'j M H:i:s' }}</td>
+      <td><span class="level {{ log.level_name|lower }}">{{ log.level_name }}</span></td>
+      <td><code>{{ log.source }}</code></td>
+      <td>{{ log.device.device_name|default:'—' }}</td>
+      <td class="wrap"><details><summary>{{ log.message|truncatechars:220 }}</summary><dl class="log-detail">
+        {% if log.status_code %}<dt>Status</dt><dd>{{ log.status_code }}</dd>{% endif %}
+        {% if log.method or log.path %}<dt>Request</dt><dd><code>{{ log.method }} {{ log.path }}</code></dd>{% endif %}
+        {% if log.host %}<dt>Host</dt><dd><code>{{ log.host }}</code></dd>{% endif %}
+        {% if log.client_ip %}<dt>Client IP</dt><dd>{{ log.client_ip }}</dd>{% endif %}
+        {% if log.username %}<dt>Signed in as</dt><dd>{{ log.username }}</dd>{% endif %}
+        {% if log.facility %}<dt>Facility</dt><dd>{{ log.facility.name }}</dd>{% endif %}
+        <dt>Logged</dt><dd>{{ log.created_at|date:'j M Y, H:i:s' }} UTC</dd>
+        {% if log.context %}<dt>Details</dt><dd>{% for key, value in log.context.items %}<code>{{ key }}</code> {{ value }}{% if not forloop.last %} · {% endif %}{% endfor %}</dd>{% endif %}
+        {% if log.message|length > 220 %}<dt>Full message</dt><dd><pre>{{ log.message }}</pre></dd>{% endif %}
+        {% if log.traceback %}<dt>Traceback</dt><dd><pre>{{ log.traceback }}</pre></dd>{% endif %}
+      </dl></details></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% if page.has_other_pages %}<nav class="pagination">{% if page.has_previous %}<a href="?{{ query }}&amp;page={{ page.previous_page_number }}">Newer</a>{% endif %}<span>Page {{ page.number }} of {{ page.paginator.num_pages }}</span>{% if page.has_next %}<a href="?{{ query }}&amp;page={{ page.next_page_number }}">Older</a>{% endif %}</nav>{% endif %}
+  {% else %}
+  <div class="empty-state"><h3>No log entries match</h3><p>Try a longer period or a lower level. Entries start from the moment this feature was deployed.</p></div>
+  {% endif %}
+</section>
+{% endblock %}
