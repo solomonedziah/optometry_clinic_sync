@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from .conflicts import PLATFORM_SOURCE_ID, password_fingerprint, password_versions, uuid7
@@ -574,3 +574,49 @@ class SystemLogTests(TestCase):
 		self.assertContains(page, "bad.example")
 		self.assertNotContains(self.client.get(reverse("system-logs"), {"q": "nothing-matches-this"}), "bad.example</code>")
 		self.assertNotContains(self.client.get(reverse("system-logs"), {"source": "sync_core.admin"}), "bad.example</code>")
+
+
+@override_settings(SYNC_PUBLIC_URL="https://sync.clinic.example", ALLOWED_HOSTS=["testserver", "old.up.railway.app", "sync.clinic.example"])
+class SyncAddressTests(TestCase):
+	def setUp(self):
+		institution = Institution.objects.create(name="University of Cape Coast", code="UCC")
+		self.facility = Facility.objects.create(institution=institution, name="Optometry Eye Clinic", code="EYE")
+		_device, token, _ = create_pending_device(self.facility, device_name="Main PC A")
+		self.enrollment = self.client.post(reverse("api-device-enroll"), {
+			"token": token,
+			"installationId": str(uuid.uuid4()),
+			"platform": "win32",
+			"appVersion": "0.0.166",
+		}, content_type="application/json").json()
+
+	def test_every_device_response_advertises_the_official_address(self):
+		self.assertEqual(self.client.get(reverse("api-health"))["X-Clinic-Sync-Url"], "https://sync.clinic.example")
+		self.assertEqual(self.client.get(reverse("api-health")).json()["serviceUrl"], "https://sync.clinic.example")
+		authenticated = self.client.post(reverse("api-device-authenticate"), self.enrollment["credentials"], content_type="application/json")
+		self.assertEqual(authenticated.json()["serviceUrl"], "https://sync.clinic.example")
+		self.assertEqual(authenticated["X-Clinic-Sync-Url"], "https://sync.clinic.example")
+		self.assertNotIn("X-Clinic-Sync-Url", self.client.get(reverse("login")))
+
+	def test_a_refused_host_still_learns_the_official_address(self):
+		response = self.client.get(reverse("api-health"), HTTP_HOST="retired.up.railway.app")
+		self.assertEqual(response.status_code, 400)
+		self.assertEqual(response["X-Clinic-Sync-Url"], "https://sync.clinic.example")
+
+	def test_device_address_and_version_are_recorded_and_moves_logged(self):
+		headers = {"HTTP_AUTHORIZATION": f"Bearer {self.enrollment['accessToken']}", "HTTP_X_CLINIC_APP_VERSION": "0.0.167"}
+		pull = {"after": 0, "limit": 10}
+		self.client.post(reverse("api-sync-pull"), pull, content_type="application/json", HTTP_HOST="old.up.railway.app", **headers)
+		device = Device.objects.get(device_name="Main PC A")
+		self.assertEqual((device.last_sync_host, device.app_version), ("old.up.railway.app", "0.0.167"))
+
+		user = get_user_model().objects.create_user(username="admin", password="temporary-password")
+		self.client.force_login(user)
+		page = self.client.get(reverse("facility-detail", args=[self.facility.institution_id, self.facility.id]))
+		self.assertContains(page, "Old address")
+
+		self.client.post(reverse("api-sync-pull"), pull, content_type="application/json", HTTP_HOST="sync.clinic.example", **headers)
+		device.refresh_from_db()
+		self.assertEqual(device.last_sync_host, "sync.clinic.example")
+		self.assertTrue(SystemLog.objects.filter(message="Main PC A now syncs through sync.clinic.example (was old.up.railway.app)").exists())
+		page = self.client.get(reverse("facility-detail", args=[self.facility.institution_id, self.facility.id]))
+		self.assertNotContains(page, "Old address")

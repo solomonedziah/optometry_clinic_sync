@@ -29,6 +29,19 @@ if railway_public_domain:
     ALLOWED_HOSTS.append(railway_public_domain)
     CSRF_TRUSTED_ORIGINS.append(f"https://{railway_public_domain}")
 
+# The one official address Main PCs should use. Every response advertises it and
+# desktop clients switch to it on their own, so moving the service to a new
+# domain is: set SYNC_PUBLIC_URL to the new address, keep the old host in
+# SYNC_ACCEPTED_HOSTS until every Main PC shows the new address, then drop it.
+SYNC_PUBLIC_URL = os.getenv("SYNC_PUBLIC_URL", "").strip().rstrip("/")
+SYNC_ACCEPTED_HOSTS = [host.strip() for host in os.getenv("SYNC_ACCEPTED_HOSTS", "").split(",") if host.strip()]
+_sync_public_host = urlparse(SYNC_PUBLIC_URL).hostname if SYNC_PUBLIC_URL else None
+for _host in filter(None, [_sync_public_host, *SYNC_ACCEPTED_HOSTS]):
+    if _host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_host)
+    if f"https://{_host}" not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(f"https://{_host}")
+
 
 # Application definition
 
@@ -44,6 +57,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'sync_core.middleware.SyncAddressMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',

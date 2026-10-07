@@ -7,6 +7,7 @@ import tempfile
 import uuid
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -99,7 +100,30 @@ def _authenticated_device(request):
 	device = device_from_access_token(authorization.removeprefix("Bearer ").strip())
 	# Lets Django's request logging (and the System Logs page) name the device.
 	getattr(request, "_request", request).sync_device = device
+	if device is not None:
+		_note_device_address(device, request)
 	return device
+
+
+def _note_device_address(device, request):
+	"""Remember which host and app version the device used; logs address moves."""
+	host = request.META.get("HTTP_HOST", "")[:200]
+	app_version = request.headers.get("X-Clinic-App-Version", "").strip()[:40]
+	changes = {}
+	if host and host != device.last_sync_host:
+		if device.last_sync_host:
+			logger.info("%s now syncs through %s (was %s)", device.device_name, host, device.last_sync_host, extra={"device": device})
+		changes["last_sync_host"] = host
+	if app_version and app_version != device.app_version:
+		changes["app_version"] = app_version
+	if changes:
+		Device.objects.filter(pk=device.pk).update(**changes)
+		for field, value in changes.items():
+			setattr(device, field, value)
+
+
+def _service_url(request):
+	return settings.SYNC_PUBLIC_URL or request.build_absolute_uri("/").rstrip("/")
 
 
 def _large_file_key(oid):
@@ -175,6 +199,7 @@ def facility_detail(request, institution_id, facility_id):
 		"facility": facility,
 		"devices": facility.devices.all(),
 		"open_conflict_count": FacilitySyncConflict.objects.filter(facility=facility, status=ConflictStatus.OPEN).count(),
+		"official_sync_host": urlparse(settings.SYNC_PUBLIC_URL).hostname if settings.SYNC_PUBLIC_URL else None,
 		"form": form,
 		"enrollment": enrollment,
 		"cloud_service_url": request.build_absolute_uri("/").rstrip("/"),
@@ -426,7 +451,8 @@ def facility_account_detail(request, institution_id, facility_id, public_id):
 
 @api_view(["GET"])
 def health(request):
-	return Response({"status": "ok"})
+	# serviceUrl lets a client confirm a candidate address reaches this same service.
+	return Response({"status": "ok", "service": "clinic-sync", "serviceUrl": settings.SYNC_PUBLIC_URL or None})
 
 
 @api_view(["POST"])
@@ -472,7 +498,8 @@ def authenticate_device_api(request):
 	if device is None:
 		return Response({"error": "Invalid device credentials."}, status=status.HTTP_401_UNAUTHORIZED)
 	logger.debug("%s signed in", device.device_name, extra={"device": device})
-	return Response({"accessToken": issue_access_token(device), "expiresIn": ACCESS_TOKEN_MAX_AGE})
+	_note_device_address(device, request)
+	return Response({"accessToken": issue_access_token(device), "expiresIn": ACCESS_TOKEN_MAX_AGE, "serviceUrl": _service_url(request)})
 
 
 @api_view(["GET"])
@@ -480,7 +507,7 @@ def device_me_api(request):
 	device = _authenticated_device(request)
 	if device is None or device.status != DeviceStatus.ENROLLED:
 		return Response({"error": "Device authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
-	return Response({"device": device_payload(device)})
+	return Response({"device": device_payload(device), "serviceUrl": _service_url(request)})
 
 
 @api_view(["PUT", "GET"])

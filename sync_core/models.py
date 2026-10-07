@@ -73,6 +73,8 @@ class Device(TimestampedModel):
 	location_name = models.CharField(max_length=160, blank=True)
 	platform = models.CharField(max_length=80, blank=True)
 	app_version = models.CharField(max_length=40, blank=True)
+	# Host the device last reached us on, to confirm every Main PC has moved after an address change.
+	last_sync_host = models.CharField(max_length=200, blank=True)
 	status = models.CharField(max_length=32, choices=DeviceStatus, default=DeviceStatus.PENDING)
 	enrolled_at = models.DateTimeField(null=True, blank=True)
 	last_seen_at = models.DateTimeField(null=True, blank=True)

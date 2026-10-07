@@ -236,3 +236,17 @@
     gap: 12px;
   }
 }
+
+/* Main PCs list with sync address */
+.devices.with-address .table-row {
+  grid-template-columns: 1.4fr 1fr 1fr 1.8fr .6fr .9fr;
+}
+
+.sync-host code {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.address-note {
+  margin-top: 12px;
+}
