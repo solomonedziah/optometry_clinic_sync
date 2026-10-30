@@ -68,6 +68,7 @@ from .services import (
 	device_from_access_token,
 	enroll_device,
 	issue_access_token,
+	lock_facility_event_sequence,
 	project_sync_event,
 )
 
@@ -619,6 +620,7 @@ def sync_push_api(request):
 	conflicts = []
 	for incoming in serializer.validated_data["events"]:
 		with transaction.atomic():
+			lock_facility_event_sequence(device.facility_id)
 			existing_event = FacilitySyncEvent.objects.filter(event_id=incoming["eventId"]).first()
 			if existing_event:
 				if existing_event.facility_id != device.facility_id:

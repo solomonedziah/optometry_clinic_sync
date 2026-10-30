@@ -411,6 +411,22 @@ class ConflictResolutionTests(TestCase):
 	def facility_url(self, name, *extra):
 		return reverse(name, args=[self.facility.institution_id, self.facility.id, *extra])
 
+	def test_every_new_event_locks_its_facility_sequence_first(self):
+		# Sequences must commit in the order they are allocated, or a device that
+		# pulls between two commits skips the earlier event for good. Every path
+		# that creates an event takes the facility lock first.
+		from unittest import mock
+		from . import conflicts, views
+
+		with mock.patch.object(views, "lock_facility_event_sequence", wraps=views.lock_facility_event_sequence) as locked:
+			self.push(self.machine_a, self.patient_create())
+		locked.assert_called_with(self.facility.id)
+
+		entity = FacilitySyncEntity.objects.get(facility=self.facility, entity_public_id="patient-1")
+		with mock.patch.object(conflicts, "lock_facility_event_sequence", wraps=conflicts.lock_facility_event_sequence) as locked:
+			conflicts._issue_platform_event(entity, "update", {"patient": {"firstName": "Esi"}})
+		locked.assert_called_with(self.facility.id)
+
 	def test_rejected_push_is_recorded_and_retries_count_as_attempts(self):
 		create = self.patient_create()
 		self.push(self.machine_a, create)

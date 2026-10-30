@@ -119,6 +119,17 @@ def device_from_access_token(raw_token):
         return None
 
 
+def lock_facility_event_sequence(facility_id):
+    """Serialise event creation for one facility.
+
+    Call inside transaction.atomic() before creating a FacilitySyncEvent. Event
+    sequences come from one shared counter; without this lock two concurrent
+    pushes could commit out of order, and a device pulling between the two
+    commits would move its cursor past the earlier event and never receive it.
+    """
+    Facility.objects.select_for_update().only("id").get(pk=facility_id)
+
+
 def project_sync_event(event):
     table_name = SYNC_ENTITY_TABLE_MAP.get(event.entity_type)
     if table_name is None:

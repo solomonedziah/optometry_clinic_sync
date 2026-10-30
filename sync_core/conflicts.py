@@ -31,7 +31,7 @@ from .models import (
 	FacilitySyncEntity,
 	FacilitySyncEvent,
 )
-from .services import project_sync_event
+from .services import lock_facility_event_sequence, project_sync_event
 
 USER_ENTITY = "user"
 CREDENTIAL_KEY = "userCredential"
@@ -156,6 +156,7 @@ def settle_resent_conflict(event_id):
 
 
 def _issue_platform_event(entity, operation, payload):
+	lock_facility_event_sequence(entity.facility_id)
 	event = FacilitySyncEvent.objects.create(
 		facility=entity.facility,
 		source_device=None,
